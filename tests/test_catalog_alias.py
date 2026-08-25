@@ -8,7 +8,7 @@ import warnings
 
 import pytest
 
-from rosetta import catalog
+from acmaddl import catalog
 
 
 def test_alias_resolves_to_target_config():
@@ -51,6 +51,6 @@ def test_aliases_excluded_from_live_product_list():
 
 def test_unknown_alias_target_raises():
     # Sanity: a well-formed alias must point at a real product.
-    from rosetta.catalog import _catalog
+    from acmaddl.catalog import _catalog
     assert all(v["alias_of"] in _catalog
                for v in _catalog.values() if "alias_of" in v)

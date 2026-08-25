@@ -9,14 +9,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-import rosetta
-from rosetta.adapters.opendap import (
+import acmaddl
+from acmaddl.adapters.opendap import (
     _build_url,
     _load_obs_chunks,
     _reject_degenerate,
     _sort_ascending,
 )
-from rosetta.catalog import _catalog
+from acmaddl.catalog import _catalog
 
 # An SST product is NaN over land, so the sample region must be open ocean.
 # The western Indian Ocean, which is also the box the WIO/IOD indices use.
@@ -144,7 +144,7 @@ def test_the_guard_runs_before_the_result_can_be_cached():
     reached the cache would keep being served long after the server recovered."""
     import inspect
 
-    from rosetta.adapters import opendap
+    from acmaddl.adapters import opendap
 
     source = inspect.getsource(opendap._load_obs_chunks)
     assert "_reject_degenerate" in source
@@ -175,7 +175,7 @@ def test_ersst_entry_declares_what_the_opendap_adapter_needs():
     assert entry["decode_times"] is True
     assert entry["variables"]["sst"]["native_name"] == "sst"
     # ERSST is already in Celsius, so no conversion fires; the target label is
-    # rosetta's canonical "C", matching every other temperature product.
+    # acmaddl's canonical "C", matching every other temperature product.
     assert entry["variables"]["sst"]["units"] == "degC"
     assert entry["variables"]["sst"]["target_units"] == "C"
 
@@ -193,7 +193,7 @@ def test_ersst_is_not_declared_as_a_forecast_product():
 @pytest.mark.network
 def test_fetch_ersst_v5_monthly_sst():
     """Guards the PSL endpoint, the time decoding and the latitude ordering."""
-    ds = rosetta.fetch(product="obs/ersst-v5", variable="sst",
+    ds = acmaddl.fetch(product="obs/ersst-v5", variable="sst",
                        hindcast=(1991, 1992), region=REGION, verbose=True)
     assert "sst" in ds and ds.sizes["time"] == 24
     assert ds["sst"].attrs["units"] == "C"
@@ -207,7 +207,7 @@ def test_fetch_ersst_v5_monthly_sst():
 def test_ersst_supports_the_named_ocean_indices():
     """The reason to catalogue ERSST: it is the reference SST for ONI/RONI/IOD."""
     deepscale = pytest.importorskip("deepscale")
-    ds = rosetta.fetch(product="obs/ersst-v5", variable="sst",
+    ds = acmaddl.fetch(product="obs/ersst-v5", variable="sst",
                        hindcast=(1991, 2020), verbose=False, progress=False)
     sst = ds["sst"].groupby("time.year").mean("time")
 

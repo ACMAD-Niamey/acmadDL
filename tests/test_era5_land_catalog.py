@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from rosetta import catalog
-from rosetta.adapters import get_adapter
-from rosetta.normalize import normalize
+from acmaddl import catalog
+from acmaddl.adapters import get_adapter
+from acmaddl.normalize import normalize
 
 PRODUCT = "obs/era5-land-monthly"
 

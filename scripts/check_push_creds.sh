@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
 # check_push_creds.sh — prove this machine has GitHub creds that can PUSH to a
-# private repo (default: accord-research/rosetta), without changing anything.
+# private repo (default: ACMAD-Niamey/acmadDL), without changing anything.
 #
 # Creds are a machine-level SSH key (~/.ssh/id_ed25519), not a session secret,
 # so any session/agent on THIS machine inherits them. A remote/cloud agent or a
 # different computer does NOT — it would need its own key or a PAT.
 #
 # Usage:
-#   scripts/check_push_creds.sh                       # checks accord-research/rosetta
+#   scripts/check_push_creds.sh                       # checks ACMAD-Niamey/acmadDL
 #   scripts/check_push_creds.sh owner/repo            # checks any repo
 #
 # Exit status: 0 = push access confirmed, non-zero = not confirmed.
 
 set -uo pipefail
 
-REPO="${1:-accord-research/rosetta}"
+REPO="${1:-ACMAD-Niamey/acmadDL}"
 REMOTE="git@github.com:${REPO}.git"
 TMP_REF="refs/heads/__perm-check-delete-me"
 SSH="ssh -o BatchMode=yes"   # never prompt; fail fast if the key isn't usable

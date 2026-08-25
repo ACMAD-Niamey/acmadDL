@@ -1,4 +1,4 @@
-# Rosetta — Test Specification
+# acmadDL — Test Specification
 
 Tests are organized in layers: unit tests that run fast with no network, integration tests that hit real APIs, and end-to-end tests that verify the full `fetch()` pipeline.
 
@@ -168,7 +168,7 @@ These test the complete flow: catalog lookup → adapter → normalize → stora
 
 ```
 test_e2e_fetch_cfsv2_normalized
-  ds = rosetta.fetch(
+  ds = acmaddl.fetch(
       product="nmme/cfsv2",
       variable="precip",
       init="2015-02",
@@ -183,7 +183,7 @@ test_e2e_fetch_cfsv2_normalized
     - Region is correctly subsetted
 
 test_e2e_fetch_chirps_normalized
-  ds = rosetta.fetch(
+  ds = acmaddl.fetch(
       product="obs/chirps",
       variable="precip",
       target="MAM",
@@ -200,7 +200,7 @@ test_e2e_fetch_chirps_normalized
 
 ```
 test_e2e_fetch_and_save_netcdf
-  ds = rosetta.fetch(
+  ds = acmaddl.fetch(
       product="nmme/cfsv2",
       variable="precip",
       init="2015-02",
@@ -218,18 +218,18 @@ test_e2e_fetch_and_save_netcdf
 
 ### 3.3 Fetch for DeepScale compatibility
 
-This is the "contract test" — it verifies that Rosetta output is ready for DeepScale.
+This is the "contract test" — it verifies that acmadDL output is ready for DeepScale.
 
 ```
 test_e2e_deepscale_contract_gcm
-  ds = rosetta.fetch(product="nmme/cfsv2", variable="precip", ...)
+  ds = acmaddl.fetch(product="nmme/cfsv2", variable="precip", ...)
   Assert:
     - ds has dims: {year, member, lat, lon} (hindcast) or {member, lat, lon} (forecast)
     - ds.lat and ds.lon are float64, monotonically increasing
     - ds["precip"] is a DataArray with no object-type coords
 
 test_e2e_deepscale_contract_obs
-  ds = rosetta.fetch(product="obs/chirps", variable="precip", ...)
+  ds = acmaddl.fetch(product="obs/chirps", variable="precip", ...)
   Assert:
     - ds has dims: {year, lat, lon} or {time, lat, lon}
     - Grid resolution is finer than the GCM product
@@ -242,11 +242,11 @@ test_e2e_deepscale_contract_obs
 
 ```bash
 # Unit tests only (fast, no network)
-pytest rosetta/tests/ -m "not integration"
+pytest acmaddl/tests/ -m "not integration"
 
 # All tests including integration (slow, needs network + CDS credentials)
-pytest rosetta/tests/ -m ""
+pytest acmaddl/tests/ -m ""
 
 # Just the contract tests
-pytest rosetta/tests/ -k "deepscale_contract"
+pytest acmaddl/tests/ -k "deepscale_contract"
 ```

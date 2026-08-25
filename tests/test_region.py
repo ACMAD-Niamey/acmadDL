@@ -1,6 +1,6 @@
-"""Tests for shapefile / geometry region input (rosetta-plan §5, issue #12).
+"""Tests for shapefile / geometry region input (acmaddl-plan §5, issue #12).
 
-Three input forms must work for ``rosetta.fetch(region=...)``:
+Three input forms must work for ``acmaddl.fetch(region=...)``:
     * a bbox ``[lat_s, lat_n, lon_w, lon_e]`` (passes through unchanged);
     * a path to a ``.shp`` shapefile (bbox + polygon extracted);
     * a shapely geometry / geopandas GeoSeries (bbox + polygon extracted).
@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from rosetta.region import resolve_region
-from rosetta.normalize import clip_to_geometry, normalize
+from acmaddl.region import resolve_region
+from acmaddl.normalize import clip_to_geometry, normalize
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def _fake_env(monkeypatch, raw):
     """Patch fetch's adapter + catalog to serve `raw`; return (module, seen)."""
     import importlib
 
-    fetch_mod = importlib.import_module("rosetta.fetch")
+    fetch_mod = importlib.import_module("acmaddl.fetch")
     seen = {}
 
     class FakeAdapter:
@@ -144,7 +144,7 @@ class TestResolveShapefile:
     def test_missing_geopandas_raises_clear_error(self, monkeypatch):
         # Simulate geopandas not being installed: importing it fails.
         monkeypatch.setitem(sys.modules, "geopandas", None)
-        with pytest.raises(ImportError, match=r"rosetta\[geo\]"):
+        with pytest.raises(ImportError, match=r"acmadDL\[geo\]"):
             resolve_region("region.shp")
 
 
@@ -268,9 +268,9 @@ class TestFetchWiring:
         import importlib
         from shapely.geometry import Polygon
 
-        # `rosetta.fetch` the attribute is the function (re-exported in
+        # `acmaddl.fetch` the attribute is the function (re-exported in
         # __init__), so reach the module object explicitly to monkeypatch it.
-        fetch_mod = importlib.import_module("rosetta.fetch")
+        fetch_mod = importlib.import_module("acmaddl.fetch")
 
         # Triangle inside lon 30..40 / lat -5..5: corners of the bbox lie
         # outside it, so a correct geometry mask NaNs them.
@@ -311,7 +311,7 @@ class TestFetchWiring:
         # drops the boundary cells, leaving the country's tips empty.
         import importlib
         from shapely.geometry import box
-        fetch_mod = importlib.import_module("rosetta.fetch")
+        fetch_mod = importlib.import_module("acmaddl.fetch")
 
         # Coarse 1° grid, integer-degree centres.
         lat = np.arange(0, 17, 1.0)

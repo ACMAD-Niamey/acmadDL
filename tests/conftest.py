@@ -100,7 +100,7 @@ def synthetic_obs_monthly_ds():
     )
 
 
-# Mapping of PyCPT predictor names to (rosetta_product, variable) pairs.
+# Mapping of PyCPT predictor names to (acmaddl_product, variable) pairs.
 PYCPT_REFERENCE_GCMS = {
     # PRCP predictors
     "GEOSS2S.PRCP":       ("nmme/geoss2s",         "precip"),

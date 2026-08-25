@@ -1,4 +1,4 @@
-from rosetta.adapters.base import AdapterBase
+from acmaddl.adapters.base import AdapterBase
 
 
 class _Dummy(AdapterBase):

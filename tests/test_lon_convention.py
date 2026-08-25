@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from rosetta.normalize import select_lon, sanitize_for_netcdf
+from acmaddl.normalize import select_lon, sanitize_for_netcdf
 
 
 def _ds(lons, name="lon"):

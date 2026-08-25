@@ -5,7 +5,7 @@ never imported into adapters/__init__.py, so it was missing from _ADAPTERS and
 unreachable via get_adapter(). Every adapter that ships should be registered and
 constructible (heavy optional deps must be imported lazily, not at module load).
 """
-from rosetta.adapters import _ADAPTERS, get_adapter
+from acmaddl.adapters import _ADAPTERS, get_adapter
 
 
 def test_icechunk_adapter_registered():

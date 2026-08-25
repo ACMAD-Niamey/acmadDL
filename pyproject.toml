@@ -1,6 +1,6 @@
 [project]
-name = "accord-rosetta"
-version = "0.1.15"
+name = "acmadDL"
+version = "0.2.0"
 description = "Canonical data acquisition for seasonal climate forecasting"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,8 +41,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/accord-research/rosetta"
-Repository = "https://github.com/accord-research/rosetta"
+Homepage = "https://github.com/ACMAD-Niamey/acmadDL"
+Repository = "https://github.com/ACMAD-Niamey/acmadDL"
 
 [project.optional-dependencies]
 # icechunk (versioned Zarr stores) powers the optional icechunk adapter. It
@@ -53,13 +53,13 @@ icechunk = ["icechunk>=2"]
 s3 = ["boto3"]
 dev = ["pytest"]
 demo = ["matplotlib", "cartopy", "rasterio"]
-# Shapefile / geometry region input (rosetta.fetch(region="x.shp")). rioxarray
+# Shapefile / geometry region input (acmaddl.fetch(region="x.shp")). rioxarray
 # is already a core dep and rasterio rides in with it; geopandas is the only
 # genuinely new requirement, kept optional because its stack is heavy.
 geo = ["geopandas", "rasterio"]
 
 [project.scripts]
-rosetta = "rosetta.cli:cli"
+acmaddl = "acmaddl.cli:cli"
 
 [tool.uv]
 # sheerwater's metadata hard-pins zarr==2.18.3, which blocks icechunk (needs
@@ -74,10 +74,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rosetta"]
-# Ship the package-local nuthatch.toml so it lands next to rosetta's modules and
-# shadows any ambient nuthatch config in site-packages (see src/rosetta/nuthatch.toml).
-force-include = { "src/rosetta/nuthatch.toml" = "rosetta/nuthatch.toml" }
+# src/rosetta is the deprecated import alias kept for the 0.1.x -> 0.2.0 rename
+# (see src/rosetta/__init__.py); it is a redirect module, not a second copy.
+packages = ["src/acmaddl", "src/rosetta"]
+# Ship the package-local nuthatch.toml so it lands next to acmaddl's modules and
+# shadows any ambient nuthatch config in site-packages (see src/acmaddl/nuthatch.toml).
+force-include = { "src/acmaddl/nuthatch.toml" = "acmaddl/nuthatch.toml" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -91,6 +93,6 @@ markers = [
 # V1: root and local both point to the same local filesystem path.
 # Public mirror is a V2 item.
 [tool.nuthatch.root]
-filesystem = "~/.nuthatch/rosetta"
+filesystem = "~/.nuthatch/acmaddl"
 [tool.nuthatch.local]
-filesystem = "~/.nuthatch/rosetta"
+filesystem = "~/.nuthatch/acmaddl"

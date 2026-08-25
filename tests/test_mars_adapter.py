@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 
 def test_mars_adapter_registers():
-    """The MARS adapter is reachable via the rosetta adapter registry."""
-    from rosetta.adapters.mars import MARSAdapter
+    """The MARS adapter is reachable via the acmaddl adapter registry."""
+    from acmaddl.adapters.mars import MARSAdapter
     assert MARSAdapter.__name__ == "MARSAdapter"
 
 
@@ -60,11 +60,11 @@ def test_mars_adapter_builds_reforecast_request(monkeypatch, tmp_path):
     # Also monkeypatch the adapter's internal "open downloaded file" if it
     # uses cfgrib by default — the stub writes NetCDF, not GRIB.
     monkeypatch.setattr(
-        "rosetta.adapters.mars._open_downloaded",
+        "acmaddl.adapters.mars._open_downloaded",
         lambda path: xr.open_dataset(path, decode_times=False),
     )
 
-    from rosetta.adapters.mars import MARSAdapter
+    from acmaddl.adapters.mars import MARSAdapter
     adapter = MARSAdapter()
     config = _mars_product_config()
     ds = adapter.fetch_data(config, "precip", date_range=(2020, 2022),
@@ -93,7 +93,7 @@ def test_mars_adapter_builds_reforecast_request(monkeypatch, tmp_path):
 
 def test_mars_adapter_rejects_when_reforecast_flag_missing(monkeypatch):
     """The MARS adapter is reforecast-only in v1 — fetch_data raises if _reforecast is unset."""
-    from rosetta.adapters.mars import MARSAdapter
+    from acmaddl.adapters.mars import MARSAdapter
     adapter = MARSAdapter()
     config = _mars_product_config(_reforecast=False)
     with pytest.raises(ValueError, match="reforecast"):
@@ -102,7 +102,7 @@ def test_mars_adapter_rejects_when_reforecast_flag_missing(monkeypatch):
 
 def test_mars_adapter_requires_date_range(monkeypatch):
     """date_range is required (per-call hindcast years for hdate construction)."""
-    from rosetta.adapters.mars import MARSAdapter
+    from acmaddl.adapters.mars import MARSAdapter
     adapter = MARSAdapter()
     config = _mars_product_config()
     with pytest.raises(ValueError, match="date_range"):
@@ -111,8 +111,8 @@ def test_mars_adapter_requires_date_range(monkeypatch):
 
 # `test_fetch_reforecast_end_to_end_via_mars` deleted 2026-05-27: ECMWF
 # decommissioned legacy WEB-API access to the S2S dataset, so
-# `rosetta.fetch(reforecast=True)` no longer routes through MARSAdapter — it
+# `acmaddl.fetch(reforecast=True)` no longer routes through MARSAdapter — it
 # now goes to ECDS's `s2s-reforecasts` collection via the CDS adapter. The
-# CDS-side equivalent end-to-end test lives in test_rosetta.py
+# CDS-side equivalent end-to-end test lives in test_acmaddl.py
 # (test_fetch_reforecast_dispatches_to_cds_adapter). MARSAdapter is still
 # unit-tested above (build, validation) for the day we need it back.

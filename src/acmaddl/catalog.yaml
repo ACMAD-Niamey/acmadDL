@@ -1,0 +1,1613 @@
+# acmaddl product catalog.
+#
+# Coverage/ensemble field conventions (under each product's `grid:`):
+#
+#   hindcast_range: [start_year, end_year]
+#     The model's REFORECAST (hindcast) period — the fixed historical window of
+#     retrospective forecasts, a property of the model/system. It is NOT a data
+#     cap: real-time forecasts run past it to the present, and NOTHING in acmaddl
+#     uses this field to limit a fetch. For nmme/* split-stream models it doubles
+#     as the hindcast<->forecast routing boundary; for c3s/* it is descriptive
+#     metadata; for observations/reanalysis (obs/*) it denotes data coverage.
+#     `null` means there is no fixed window (rolling live feeds, on-the-fly S2S).
+#
+#   forecast_range: [start_year, end_year_or_null]
+#     The REAL-TIME forecast availability for the pinned system. A `null` end means
+#     the stream is ongoing (forecasts to the present); a year means the stream
+#     ENDED then — the pinned C3S system version was retired/superseded, so
+#     hindcasts still fetch but no NEW forecasts are issued. Absent for
+#     observations/reanalysis and the on-the-fly S2S reforecast.
+#
+#   forecast_members / hindcast_members:
+#     Ensemble sizes for the real-time forecast and the reforecast respectively —
+#     many systems run a larger ensemble in real time than in the hindcast.
+#     Observations/reanalysis have neither.
+#
+nmme/cfsv2:
+  adapter: opendap
+  split_streams: true
+  append_streams: true
+  notes: "Genuine NMME CFSv2 reforecast is currently only available via the IRI Data Library; hindcast 1982-2010 + real-time forecast are stitched via append_streams."
+  # NOTE: This uses PENTAD_SAMPLES/.MONTHLY which returns 28 members and all
+  # 10 lead months per init.  When acmaddl.fetch() is called with init= and
+  # target=, the OPeNDAP adapter automatically selects and averages only the
+  # 3 leads corresponding to the target season (L = lead_month - 0.5).
+  #
+  # KNOWN ISSUE: pycpt/IRI uses PENTAD_SAMPLES_FULL (a different sub-collection)
+  # with server-side member averaging.  The two datasets can diverge spatially
+  # for predictor domains that include ocean/Atlantic cells (e.g. W Africa),
+  # causing r(DS_gcm, IRI_gcm) < 1 and reduced cross-pipeline CCA agreement.
+  # TODO: Switch source_url to PENTAD_SAMPLES_FULL once the OPeNDAP adapter
+  # supports the required server-side lead + member averaging for that endpoint.
+  # split_streams: the {stream} placeholder resolves to HINDCAST for in-range
+  # years and FORECAST past hindcast_range[1]. The two streams are structurally
+  # identical -- same 28 members, L=0.5..9.5 leads, 1deg global grid, and units
+  # (verified against the live endpoints) -- so this is one dataset split only by
+  # period. NB the real split is by MONTH, not year: HINDCAST runs through
+  # ~2011-03 and FORECAST starts ~2011-04, so calendar year 2011 is physically
+  # split across BOTH streams. hindcast_range/forecast_range below deliberately
+  # OVERLAP at 2011 (see grid: block) so a boundary-spanning fetch requests 2011
+  # from both streams; each stream's init-time (S) filter then contributes only
+  # the inits it actually has (HINDCAST -> Jan-Mar 2011, FORECAST -> Apr-Dec
+  # 2011), and the adapter unions them -- no inits are dropped.
+  source_url: "https://iridl.ldeo.columbia.edu/SOURCES/.Models/.NMME/.NCEP-CFSv2/.{stream}/.PENTAD_SAMPLES/.MONTHLY"
+  variables:
+    precip:
+      native_name: prec
+      units: "mm/day"
+      target_units: "mm"
+      season_total_conversion: true
+    temp:
+      native_name: tref
+      units: K
+      target_units: C
+    sst:
+      native_name: sst
+      units: K
+      target_units: K
+  # The endpoint advertises M=28, but live HINDCAST and FORECAST responses have
+  # four structurally empty trailing slots. Preserve the 24 usable members.
+  drop_empty_members: true
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 24
+    hindcast_members: 24
+    hindcast_range: [1982, 2011]   # deliberately overlaps forecast_range at 2011, the true (month-granular) stream split -- see split_streams note above
+    forecast_range: [2011, null]   # real-time, ongoing. Probe-verified: HINDCAST stream ends 2011-03, FORECAST starts 2011-04; both streams are fetched for 2011 and unioned (see _resolve_streams) so no inits are dropped
+
+nmme/cfsv2-forecast:
+  alias_of: "nmme/cfsv2"   # deprecated: forecast is the same product, forecast stream
+
+# CCSM4 via IRI OPeNDAP (combined hindcast + forecast, 1982-present)
+nmme/ccsm4-iri:
+  alias_of: "nmme/ccsm4"   # deprecated: IRI DL route superseded by the CCSR route
+
+nmme/geoss2s-forecast:
+  alias_of: "nmme/geoss2s"   # deprecated: IRI DL forecast route superseded by CCSR
+
+nmme/ccsm4-hindcast:
+  alias_of: "nmme/ccsm4"   # deprecated: S3 hindcast superseded by the CCSR route
+
+nmme/cesm1-hindcast:
+  alias_of: "nmme/cesm1"   # deprecated: S3 hindcast superseded by the CCSR route
+
+nmme/geoss2s-hindcast:
+  alias_of: "nmme/geoss2s"   # deprecated: S3 hindcast superseded by the CCSR route
+
+# CCSR (Columbia) NMME — the IRI Data Library successor. One canonical product
+# per model (no -hindcast / -forecast / -iri / -ncei split); the source and the
+# hindcast-vs-forecast stream are catalog/adapter details, not part of the id.
+# CCSM4 serves one combined hindcast+forecast series; GEOSS2S/SPEAR/CanSIPS-IC4
+# split into forecast/ and hindcast/ subdirs (split_streams: true).
+
+nmme/ccsm4:
+  adapter: ccsr
+  single_year_fetch: true
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/COLA-RSMAS/CCSM4"
+  variables:
+    precip:
+      native_name: pr
+      units: mm
+      target_units: mm
+    temp:
+      native_name: tas
+      # CCSR serves NMME 2 m temperature already in Celsius (declared
+      # degree_Celsius since the 2026-07 CMIP rename; previously no units attr),
+      # unlike the IRI/CDS sources which serve Kelvin. Declaring K here caused a
+      # double K->C conversion in normalize() -> sub-absolute-zero values.
+      units: C
+      target_units: C
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 10
+    hindcast_members: 10
+    hindcast_range: [1982, 2026]
+    forecast_range: [2014, null]   # real-time, ongoing
+
+# CESM1 (COLA-RSMAS): combined hindcast+forecast like CCSM4. Migrated from the
+# acc.ord S3 archive (nmme/cesm1-hindcast, now a deprecated alias) to CCSR.
+nmme/cesm1:
+  adapter: ccsr
+  single_year_fetch: true   # per-year DAP requests; the full-range hindcast request overflows the
+                            # CCSR server and silently zero-fills (matches ccsm4). See safe_fetch.
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/COLA-RSMAS/CESM1"
+  variables:
+    precip:
+      native_name: pr
+      units: mm
+      target_units: mm
+    temp:
+      native_name: tas
+      # CCSR serves NMME 2 m temperature already in Celsius (declared
+      # degree_Celsius since the 2026-07 CMIP rename; previously no units attr),
+      # unlike the IRI/CDS sources which serve Kelvin. Declaring K here caused a
+      # double K->C conversion in normalize() -> sub-absolute-zero values.
+      units: C
+      target_units: C
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 10
+    hindcast_members: 10
+    hindcast_range: [1982, 2026]
+    forecast_range: [2017, null]   # real-time, ongoing (start approx)
+
+nmme/geoss2s:
+  adapter: ccsr
+  single_year_fetch: true   # per-year DAP requests; the full-range hindcast request overflows the
+                            # CCSR server and silently zero-fills (matches ccsm4). See safe_fetch.
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/NASA-GMAO/GEOSS2S"
+  split_streams: true
+  variables:
+    precip:
+      native_name: pr
+      units: mm
+      target_units: mm
+    temp:
+      native_name: tas
+      # CCSR serves NMME 2 m temperature already in Celsius (declared
+      # degree_Celsius since the 2026-07 CMIP rename; previously no units attr),
+      # unlike the IRI/CDS sources which serve Kelvin. Declaring K here caused a
+      # double K->C conversion in normalize() -> sub-absolute-zero values.
+      units: C
+      target_units: C
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 10   # real-time forecast runs a larger ensemble than the hindcast (verified live 2026-06: NASA-GMAO/GEOSS2S/forecast M=10)
+    hindcast_members: 4
+    hindcast_range: [1981, 2017]
+    forecast_range: [2019, null]   # real-time, ongoing
+
+# --- c3s/* : Copernicus Climate Data Store (CDS) seasonal systems ---
+# PROVENANCE: original. The CDS is the official distribution channel for these
+# centres' seasonal forecasts (ECMWF/SEAS5, CMCC, DWD, Météo-France, UKMO, JMA,
+# ECCC), so these are original-source entries — acmaddl's preferred kind. (Note
+# some models also appear under nmme/* as the NMME-program copy; e.g. CanSIPS is
+# here as c3s/eccc-cansips* and under nmme/cansipsic4 via the CCSR aggregator.)
+c3s/ecmwf:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "ecmwf"
+  system: "51"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 51
+    hindcast_members: 25
+    hindcast_range: [1981, 2016]
+    forecast_range: [2017, null]   # real-time, ongoing (verified)
+
+c3s/eccc-cansips:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "eccc"
+  system: "3"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 10
+    hindcast_members: 10
+    hindcast_range: [1990, 2020]   # ECCC GEM5-NEMO (C3S system 3) native reforecast
+    forecast_range: [2021, 2024]   # RETIRED — superseded by CanESM5.1 (sys 4, see c3s/eccc-cansipsv3)
+
+c3s/eccc-cansipsv3:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "eccc"
+  system: "4"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 20
+    hindcast_members: 20
+    hindcast_range: [1993, 2023]   # ECCC CanESM5.1 (C3S system 4) native reforecast; CDS
+                                   # serves reforecasts from 1993 (verified 2026-07-21:
+                                   # init years <=1992 return HTTP 400 "invalid combination"),
+                                   # not 1980 as previously recorded.
+    forecast_range: [2024, null]   # real-time, ongoing (verified)
+
+c3s/meteofrance:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "meteo_france"
+  system: "9"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 51
+    hindcast_members: 31
+    hindcast_range: [1993, 2024]   # Meteo-France System 9 native reforecast
+    forecast_range: [2025, null]   # real-time, ongoing (verified)
+
+c3s/cmcc:
+  adapter: cds
+  deprecated_after: "2025-08-01"
+  successor: "c3s/cmcc-sps4"
+  deprecation_note: "CMCC switched its C3S contribution from SPS3.5 (system 35) to SPS4 (system 4, c3s/cmcc-sps4) on 2025-08-01. SPS3.5 issues no new real-time forecasts, but its archive (hindcast 1993-2016 + forecasts through 2025) remains fetchable."
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "cmcc"
+  system: "35"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 40
+    hindcast_range: [1993, 2016]
+    forecast_range: [2020, 2025]   # RETIRED — superseded by CMCC SPS4 (sys 4); hindcasts still fetch
+
+c3s/cmcc-sps4:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "cmcc"
+  system: "4"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 30
+    # CMCC-CM3 (SPS4), operational 2025-08-01. Nominal reforecast ref is 1993-2022
+    # (CMCC TN0301), but 30-member data is verified through 2024 in the live CDS
+    # (probe 2026-06-25); the 30->50-member real-time boundary is 2025.
+    hindcast_range: [1993, 2024]
+    forecast_range: [2025, null]   # real-time, ongoing (50 members verified)
+
+c3s/dwd:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "dwd"
+  system: "22"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 30
+    hindcast_range: [1993, 2023]
+    forecast_range: [2023, null]   # real-time, ongoing (verified)
+
+c3s/ukmo:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "ukmo"
+  system: "604"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 62   # GloSea6 lagged ensemble — verified live (2025-06 forecast: ~2/day x month)
+    hindcast_members: 28   # verified live — monthly product aggregates the lagged burst ensemble
+    hindcast_range: [1993, 2016]
+    forecast_range: [2025, 2026]   # RETIRED — GloSea6 sys 604 window Mar2025-Feb2026; renumbered to 605
+
+c3s/jma:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "jma"
+  system: "3"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.25
+    lon_res: 1.25
+    forecast_members: 155  # CPS3 5/day lagged ensemble, aggregated over the month (verified live; hindcast is 10)
+    hindcast_members: 10
+    hindcast_range: [1991, 2020]   # JMA CPS3 (C3S system 3) native reforecast
+    forecast_range: [2022, 2026]   # RETIRED — CPS3 superseded by CPS4 (~Jan 2026)
+
+# Older system versions (match IRI Data Library versions)
+
+c3s/jma-cps2:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "jma"
+  system: "2"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.25
+    lon_res: 1.25
+    forecast_members: 13
+    hindcast_members: 10
+    hindcast_range: [1981, 2016]   # JMA CPS2 (C3S system 2) native reforecast
+    forecast_range: [2015, 2022]   # RETIRED — CPS2 superseded by CPS3
+
+c3s/dwd-gcfs21:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "dwd"
+  system: "21"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 30
+    hindcast_range: [1993, 2019]   # DWD GCFS2.1 (C3S system 21) native reforecast
+    forecast_range: [2020, 2025]   # RETIRED — superseded by GCFS2.2 (sys 22, see c3s/dwd)
+
+# Daily (sub-monthly) CDS entries — seasonal-original-single-levels
+# These provide daily-resolution hindcasts and (where available) forecasts.
+# Precip is accumulated from init and must be deaccumulated (accumulated: true).
+# Only c3s/ecmwf existed before; these extend daily coverage to 5 more centres.
+
+c3s/meteofrance-daily:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "meteo_france"
+  system: "9"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 51
+    hindcast_members: 31
+    hindcast_range: [1993, 2024]
+    forecast_range: [2025, null]   # real-time, ongoing (verified)
+
+c3s/cmcc-daily:
+  adapter: cds
+  deprecated_after: "2025-08-01"
+  successor: "c3s/cmcc-sps4-daily"
+  deprecation_note: "CMCC switched its C3S contribution from SPS3.5 (system 35) to SPS4 (system 4, c3s/cmcc-sps4-daily) on 2025-08-01. SPS3.5 issues no new real-time forecasts, but its archive (hindcast 1993-2016 + forecasts through 2025) remains fetchable."
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "cmcc"
+  system: "35"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 40
+    hindcast_range: [1993, 2016]
+    forecast_range: [2020, 2025]   # RETIRED — superseded by CMCC SPS4 (sys 4); hindcasts still fetch
+
+c3s/cmcc-sps4-daily:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "cmcc"
+  system: "4"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 30
+    hindcast_range: [1993, 2024]   # see c3s/cmcc-sps4; 30-member data verified through 2024 (probe 2026-06-25)
+    forecast_range: [2025, null]   # real-time, ongoing (50 members verified)
+
+c3s/dwd-daily:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "dwd"
+  system: "22"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 50
+    hindcast_members: 30
+    hindcast_range: [1993, 2023]
+    forecast_range: [2023, null]   # real-time, ongoing (verified)
+
+c3s/eccc-daily:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "eccc"
+  system: "4"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 20
+    hindcast_members: 20
+    hindcast_range: [1993, 2023]   # ECCC CanESM5.1 (C3S system 4) native reforecast; CDS
+                                   # serves reforecasts from 1993 (verified 2026-07-21:
+                                   # init years <=1992 return HTTP 400 "invalid combination"),
+                                   # not 1980 as previously recorded.
+    forecast_range: [2024, null]   # real-time, ongoing (verified)
+
+c3s/ukmo-daily:
+  adapter: cds
+  cds_dataset: "seasonal-original-single-levels"
+  cds_model: "ukmo"
+  system: "604"
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+      accumulated: true
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 7    # GloSea6 daily product: per-start ensemble (unverified — not probed)
+    hindcast_members: 7
+    hindcast_range: [1993, 2016]
+    forecast_range: [2025, 2026]   # RETIRED — GloSea6 sys 604 window Mar2025-Feb2026; renumbered to 605
+
+# ---------------------------------------------------------------------------
+# CHIRPS (UCSB Climate Hazards Center precipitation)
+#
+# Naming convention: obs/chirps-{version}-{cadence}[-rhiza]
+#   - Native UCSB products carry only version + cadence
+#     (e.g. obs/chirps-v3-monthly). Native data is 0.05°, 1981-present
+#     (daily v3 starts 1998), served as COG (monthly), per-year NetCDF
+#     (daily/pentad/dekad), or GeoTIFF (annual).
+#   - Rhiza Research / Sheerwater mirrors end in -rhiza: a regridded 0.25°
+#     copy on public GCS as Zarr. Convenient and cheap to crop, but NOT the
+#     native record (coarser grid; chirps_v3 only covers 2000+).
+# Sub-monthly native cadences are one NetCDF per year, fetched whole then
+# cropped (no server-side subsetting), so they are bandwidth-heavy.
+#
+# Throttling: data.chc.ucsb.edu sits behind nginx + CrowdSec, which bans an IP
+# for 4 hours (HTTP 403, "CrowdSec Ban") once it exceeds ~2 requests/sec to
+# non-static files (leaky bucket: capacity 40, leak 2/s). There is no published
+# UCSB rate limit and robots.txt disallows crawling, so that scenario is the
+# real ceiling. Each native entry therefore declares a request_interval floor
+# (seconds between file opens; callers may pass a larger fetch(request_interval=)
+# but cannot go below it). COG/TIF do several HTTP range reads per file, so they
+# pace harder than the whole-file NetCDFs. Rule of thumb for a bulk regional
+# pull: keep (range-reads-per-file / request_interval) under 2 — i.e. raise
+# request_interval for large/continental domains (≈ tiles_per_file / 2 seconds).
+# The NetCDF cadences also cap concurrent connections via max_workers, since one
+# pull can open several multi-GiB downloads at once (v3-daily is ~23.5 GiB/file).
+# ---------------------------------------------------------------------------
+
+# --- Native UCSB CHIRPS v2.0 (0.05°) ---
+obs/chirps-v2-monthly:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_monthly/cogs/"
+  file_pattern: "chirps-v2.0.{year}.{month:02d}.cog"
+  format: cog
+  request_interval: 3.0   # COG range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/month"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: monthly
+  notes: "Native UCSB CHIRPS v2.0 monthly (0.05° COG)."
+
+obs/chirps-v2-daily:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/netcdf/p05/"
+  file_pattern: "chirps-v2.0.{year}.days_p05.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent multi-GiB downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: daily
+  notes: "Native UCSB CHIRPS v2.0 daily. One NetCDF per year (~1 GiB each); downloaded whole then cropped."
+
+obs/chirps-v2-pentad:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_pentad/netcdf/"
+  file_pattern: "chirps-v2.0.{year}.pentads.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent multi-GiB downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"          # 5-day accumulation; left as a total, not a daily rate
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: pentad
+  notes: "Native UCSB CHIRPS v2.0 pentad (5-day totals, mm). One NetCDF per year."
+
+obs/chirps-v2-dekad:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_dekad/netcdf/"
+  file_pattern: "chirps-v2.0.{year}.dekads.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent multi-GiB downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"          # 10-day calendar dekad accumulation
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: dekad
+  notes: "Native UCSB CHIRPS v2.0 calendar dekad (10-day totals, mm). One NetCDF per year. Distinct from obs/chirps-v2-dekadal-rhiza (10-day ROLLING)."
+
+obs/chirps-v2-annual:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_annual/tifs/"
+  file_pattern: "chirps-v2.0.{year}.tif"
+  format: tif
+  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"          # annual total
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2024]
+    temporal: annual
+  notes: "Native UCSB CHIRPS v2.0 annual totals (mm, GeoTIFF, one file per year)."
+
+# --- Native UCSB CHIRPS v3.0 (0.05°) ---
+obs/chirps-v3-monthly:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/monthly/global/cogs/"
+  file_pattern: "chirps-v3.0.{year}.{month:02d}.cog"
+  format: cog
+  request_interval: 3.0   # COG range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/month"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2026]   # final stream is ~1.5-month-lagged; fetch the current year with allow_partial=True
+    temporal: monthly
+  notes: "Native UCSB CHIRPS v3.0 monthly (0.05° COG). Final (gauge-corrected) stream; a new month posts by ~the 15th of the following month. For the near-real-time tail use obs/chirps-v3-monthly-prelim. Was obs/chirps-direct."
+
+# Preliminary near-real-time monthly stream (~2-3-week lag), for the current
+# season before the final gauge-corrected monthly catches up. Same grid/format as
+# the final monthly COG/TIF above, different source directory (TIFs, not COGs).
+obs/chirps-v3-monthly-prelim:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/prelim/monthly/global/tifs/"
+  file_pattern: "chirps-v3.0.{year}.{month:02d}.tif"
+  format: tif
+  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/month"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    forecast_range: [2024, null]   # rolling near-real-time feed; not a fixed archive
+    temporal: monthly
+  notes: "CHIRPS v3.0 PRELIMINARY monthly GeoTIFFs (~2-3-week lag). Use for the current season; splice onto obs/chirps-v3-monthly for the completed record."
+
+obs/chirps-v3-daily:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/sat/netcdf/byYear/"
+  file_pattern: "chirps-v3.0.sat.{year}.days_p05.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent ~23.5 GiB/file downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1998, 2025]
+    temporal: daily
+  notes: "Native UCSB CHIRPS v3.0 daily (satellite-blended final). WARNING: one NetCDF per year is ~23.5 GiB and is downloaded whole before cropping — for routine daily use prefer obs/chirps-v3-daily-rhiza (0.25°). Coverage starts 1998."
+
+obs/chirps-v3-pentad:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/pentads/global/netcdf/"
+  file_pattern: "chirps-v3.0.{year}.pentads.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent multi-GiB downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: pentad
+  notes: "Native UCSB CHIRPS v3.0 pentad (5-day totals, mm). One NetCDF per year."
+
+obs/chirps-v3-dekad:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/dekads/global/netcdf/"
+  file_pattern: "chirps-v3.0.{year}.dekads.nc"
+  format: netcdf
+  request_interval: 1.0   # whole-file pulls: light pacing
+  max_workers: 2          # cap concurrent multi-GiB downloads
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: dekad
+  notes: "Native UCSB CHIRPS v3.0 calendar dekad (10-day totals, mm). One NetCDF per year. Distinct from obs/chirps-v2-dekadal-rhiza (10-day ROLLING)."
+
+# CHIRPS v3 calendar-dekad GeoTIFFs (0.05°), one raster per dekad. Unlike the
+# whole-year NetCDF above (obs/chirps-v3-dekad), these are HTTP range-read per
+# region, so a region-cropped multi-decade climatology is a stream of small
+# reads rather than tens of GiB of downloads. The `{dekad}` field (1/2/3, the
+# 10-day slices starting day 1/11/21) is templated by the http adapter, which
+# stamps each raster's timestamp explicitly. Final (gauge-corrected) stream.
+obs/chirps-v3-dekad-tif:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/dekads/global/tifs/"
+  file_pattern: "chirps-v3.0.{year}.{month:02d}.{dekad}.tif"
+  format: tif
+  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"          # 10-day calendar dekad accumulation
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: dekad
+  notes: "CHIRPS v3.0 calendar-dekad GeoTIFFs (range-readable). Final stream; for the near-real-time tail use obs/chirps-v3-dekad-prelim."
+
+# Preliminary near-real-time dekad stream (~1-dekad lag), for the current season
+# before the final gauge-corrected product catches up. Same grid and format as
+# the final tif dekad above, different source directory.
+obs/chirps-v3-dekad-prelim:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/prelim/dekads/global/tifs/"
+  file_pattern: "chirps-v3.0.{year}.{month:02d}.{dekad}.tif"
+  format: tif
+  request_interval: 3.0
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    forecast_range: [2024, null]   # rolling near-real-time feed; not a fixed archive
+    temporal: dekad
+  notes: "CHIRPS v3.0 PRELIMINARY calendar-dekad GeoTIFFs (~1-dekad lag). Use for the current season; splice onto obs/chirps-v3-dekad-tif for the completed record."
+
+obs/chirps-v3-annual:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/annual/global/tifs/"
+  file_pattern: "chirps-v3.0.{year}.tif"
+  format: tif
+  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [1981, 2025]
+    temporal: annual
+  notes: "Native UCSB CHIRPS v3.0 annual totals (mm, GeoTIFF, one file per year)."
+
+# --- Rhiza Research / Sheerwater mirrors (0.25° Zarr on public GCS) ---
+obs/chirps-v3-daily-rhiza:
+  adapter: sheerwater
+  source: chirps_v3
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    hindcast_range: [2000, 2024]
+    temporal: daily
+  notes: "Rhiza Research / Sheerwater chirps_v3 mirror (public GCS Zarr, 0.25°, daily). Coarsened from native 0.05° and only covers 2000-~mid-2024 (verified), unlike native obs/chirps-v3-* which start 1981. Was the bare obs/chirps default."
+
+obs/chirps-v2-dekadal-rhiza:
+  adapter: sheerwater
+  source: chirps_v2
+  source_kwargs:
+    agg_days: 10
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    temporal: dekadal-rolling
+    hindcast_range: [1997, 2024]   # verified live: Sheerwater chirps_v2 store span
+  notes: "Rhiza Research / Sheerwater chirps_v2 with agg_days=10: a 10-day ROLLING window (not calendar dekads). Used by the deepscale S2S testbed. For calendar dekads use native obs/chirps-{v2,v3}-dekad. Was obs/chirps-dekadal."
+
+# GPM IMERG Final precipitation via Sheerwater's imerg_final (public Zarr,
+# 0.25°, land-sea masked). Satellite precip; complements CHIRPS, esp. where
+# gauge coverage is thin. Precip only (the Sheerwater adapter calls the
+# function's default variable; temp/other vars would need adapter threading).
+obs/imerg:
+  adapter: sheerwater
+  source: imerg_final
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    hindcast_range: [2000, 2024]
+    temporal: monthly
+  notes: "GPM IMERG Final. Sheerwater-backed (public GCS Zarr, 0.25°)."
+
+# GHCN gauge-based precipitation via Sheerwater's ghcn_avg (gridded station
+# average, public Zarr, 0.25°). Precip only for now (temp via Sheerwater needs
+# the adapter to thread the `variable` arg — tracked as a follow-up).
+obs/ghcn:
+  adapter: sheerwater
+  source: ghcn_avg
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    hindcast_range: [1981, 2024]
+    temporal: monthly
+  notes: "GHCN gauge average. Sheerwater-backed (public GCS Zarr, 0.25°). Precip only."
+
+# CHIRPS preliminary live feed via Rhiza/Sheerwater's chirps_raw_live.
+# Daily values (no aggregation parameter — caller must aggregate to
+# dekads downstream). ~8-day lag from the present (vs. ~3-week lag of
+# chirps_v2). Used by the deepscale S2S testbed for recent-obs scoring
+# when the finalized v2 data hasn't caught up yet. Lineage (v2 vs v3
+# prelim) not yet confirmed, so the name carries no version token.
+obs/chirps-live-rhiza:
+  adapter: sheerwater
+  source: chirps.chirps_raw_live
+  source_kwargs:
+    recompute: true     # actually compute live data (not strict read-from-cache)
+    cache_mode: write   # write the fetched data into the local cache
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+      # Raw CHIRPS uses -9999 as the ocean / missing-data sentinel. The
+      # chirps_raw_live path doesn't apply sheerwater's land-sea mask, so
+      # the sentinel reaches us literally. normalize converts it to NaN
+      # so downstream aggregations skip ocean cells correctly.
+      fill_value: -9999
+  grid:
+    lat_res: 0.05  # CHIRPS native resolution
+    lon_res: 0.05
+    temporal: daily
+    hindcast_range: null   # live preliminary feed (~8-day lag), rolling — no fixed historical coverage
+  notes: "Rhiza Research / Sheerwater chirps_raw_live preliminary near-real-time feed (~8-day lag). Mirror of UCSB CHIRPS prelim. Was obs/chirps-live."
+
+c3s/ecmwf-monthly:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "ecmwf"
+  system: "51"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 51
+    hindcast_members: 25
+    hindcast_range: [1981, 2016]   # ECMWF SEAS5 (C3S system 51) native reforecast
+    forecast_range: [2017, null]   # real-time, ongoing (verified)
+
+c3s/ecmwf-seas51c:
+  adapter: iridl
+  deprecated_after: "2026-04-30"
+  successor: "c3s/ecmwf-monthly"
+  iridl_path: "SOURCES/.EU/.Copernicus/.CDS/.C3S/.ECMWF/.SEAS51_iri2/.appended"
+  variables:
+    precip:
+      iridl_name: prcp
+      native_name: prcp
+      units: "mm/day"
+      target_units: "mm"
+      season_total_conversion: true
+      iridl_unit_ops: "c%3A/1000/(mm%20m-1)/%3Ac/mul/c%3A/86400/(s%20day-1)/%3Ac/mul"
+    sst:
+      native_name: sst  # IRI OPeNDAP variable name — differs from CDS "sea_surface_temperature"
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 51   # SEAS5; IRI-route, deprecated
+    hindcast_members: 25
+    # NOTE: IRI-DL "SEAS51_iri2/.appended" route (deprecated; successor
+    # c3s/ecmwf-monthly). This is the IRI route's declared coverage and has NOT
+    # been verified against SEAS5's native reforecast (1981-2016) — the IRI
+    # appended route may be trimmed. Verify before relying on the start year.
+    hindcast_range: [1993, 2016]
+
+# ---------------------------------------------------------------------------
+# CHC forecast products (data.chc.ucsb.edu)
+#
+# Issuance-keyed: one file per (issuance date, lead), located by the `issuance`
+# block's strftime templates over {init}, {valid} and {lead}. Fetch them with
+# init="YYYY-MM-DD", or with a sequence of such dates to stack many issuances
+# on init_time (e.g. the June-30 forecast of every hindcast year).
+#
+# CHIRPS3-GEFS is GEFSv12 bias-corrected to the CHIRPS3 distribution and
+# downscaled with IMERGv7-Late. Its record has a deliberate hole: GEFS
+# reforecasts start January 2000 but the IMERG used to downscale them starts
+# June 2000, and the operational GEFSv12 stream begins September 2020 — so CHC
+# publishes complete years only, 2001-2019 (reforecast) and 2021-present. That
+# 2001-2019 span is what makes a real hindcast-skill analysis possible.
+#
+# The older CHIRPS2-GEFS stream (products/EWX/.../CHIRPS-GEFS_precip_v12) was
+# discontinued on 2026-07-01 and is deliberately not catalogued.
+# ---------------------------------------------------------------------------
+chc/chirps-gefs-daily:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-GEFS/v3/daily/global/"
+  format: tif
+  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  issuance:
+    # Directory = issuance date, filename = valid date. Lead 0 is the issuance
+    # day itself, so a "15-day forecast" spans leads 0-14; the archive carries
+    # one more (16 files per issuance).
+    path_pattern: "{init:%Y}/{init:%m}/{init:%d}"
+    file_pattern: "c3g_{valid:%Y}.{valid:%m}.{valid:%d}.tif"
+    leads: [0, 15]
+    lead_units: days
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [2001, 2019]   # GEFSv12 reforecast era
+    forecast_range: [2021, null]   # operational; 2020 deliberately absent
+    temporal: daily
+  notes: >-
+    CHIRPS3-GEFS daily precipitation forecast, 16 leads per issuance, issued
+    daily. Aggregate to dekads/pentads downstream (deepscale.accumulate) rather
+    than fetching CHC's separate dekad product, which is keyed by target dekad
+    rather than by issuance and so does not fit the issuance templating.
+
+chc/chirps-gefs-15day:
+  adapter: http
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-GEFS/v3/15_day/global/data/"
+  format: tif
+  request_interval: 3.0
+  issuance:
+    # One accumulated 15-day total per issuance: no lead dimension, and the
+    # filename carries the init date rather than a valid date.
+    path_pattern: "{init:%Y}"
+    file_pattern: "c3g_{init:%Y}.{init:%m}.{init:%d}.tif"
+    leads: [0, 0]
+    lead_units: days
+  variables:
+    precip:
+      native_name: precip
+      units: "mm"          # 15-day accumulation, left as a total
+      target_units: "mm"
+      fill_value: -9999
+  grid:
+    lat_res: 0.05
+    lon_res: 0.05
+    hindcast_range: [2001, 2019]
+    forecast_range: [2021, null]
+    temporal: 15day
+  notes: >-
+    CHIRPS3-GEFS 15-day accumulated precipitation total, one raster per
+    issuance. lead_time is a singleton (0 days) spanning the [init, init+15d)
+    window, so valid_time marks the window's start, not its end.
+
+c3s/ecmwf-s2s:
+  adapter: cds
+  cds_dataset: "s2s-forecasts"
+  # ECMWF Climate Data Store (separate endpoint from Copernicus CDS). Override
+  # if you have a single .cdsapirc that points at a different endpoint.
+  cds_url: "https://ecds.ecmwf.int/api"
+  cds_model: "ecmwf"               # threaded into request as `origin`
+  forecast_type: "perturbed_forecast"
+  level_type: "single_level"       # required by ECDS; without it MARS finds nothing
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      # Despite ECMWF docs saying "m", empirical inspection of returned
+      # data (both the CDS NetCDF and the MARS GRIB) shows values are
+      # actually in kg m**-2 (= mm). The (m, mm/day) conversion would
+      # over-scale by 1000x. Declaring mm here makes the after-deaccumulation
+      # 24h-step value pass through identity → mm/day numerically.
+      units: mm
+      target_units: "mm/day"
+      accumulated: true
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.5
+    lon_res: 1.5
+    forecast_members: 50   # S2S: 50 perturbed forecast (+control); reforecast ~11 — verify live
+    hindcast_members: 11
+    hindcast_range: null   # on-the-fly reforecast keyed to each forecast's calendar week (see note below) — no fixed window
+  # Hindcast availability depends on the issuance date — ECMWF S2S provides
+  # on-the-fly reforecasts for the same calendar week, not a static range.
+
+obs/ersst-v5:
+  adapter: opendap
+  # NOAA PSL THREDDS. One NetCDF per variable, served whole — no Ingrid variable
+  # path segment — so url_template overrides the IRIDL default.
+  source_url: "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.ersst.v5/sst.mnmean.nc"
+  url_template: "{base}"
+  decode_times: true      # ordinary "days since 1800-1-1", unlike NMME's "months since"
+  # Probed 2026-07-09: a 120-month global request returns real data; 240 months
+  # comes back zero-filled, with netCDF4 printing "DAP DATADDS packet is
+  # apparently too short" to stderr and raising nothing. Chunk well under that.
+  max_request_years: 5
+  variables:
+    sst:
+      native_name: sst
+      units: degC        # as the file declares it
+      target_units: C    # acmaddl's canonical Celsius label (see _CONVERSIONS)
+  grid:
+    lat_res: 2.0
+    lon_res: 2.0
+    hindcast_range: [1954, 2026]
+    temporal: monthly
+  notes: >-
+    NOAA Extended Reconstructed SST v5, 2° monthly, 1854-present (catalogued
+    from 1954; the 19th-century record is sparse). The reference SST dataset for
+    the 1991-2020 WMO baseline used by ONI/RONI/IOD index verification. Latitude
+    is stored north-to-south upstream; the adapter sorts it ascending.
+
+obs/era5:
+  adapter: cds
+  cds_dataset: "reanalysis-era5-single-levels-monthly-means"
+  product_type: "monthly_averaged_reanalysis"
+  # Single-level ERA5 monthly means. precip + sst added (§7 / Decision 5b) so
+  # ERA5 is broadly usable, not temp-only. Pressure-level fields (z500, u850,
+  # v850) live in a different CDS dataset and would be a separate
+  # obs/era5-pressure entry (follow-up) — they are not in single-levels.
+  variables:
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+    sst:
+      native_name: sea_surface_temperature
+      short_name: sst
+      units: K
+      target_units: C
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    # Reanalysis (observed), not a forecast — hindcast_range here is the data
+    # coverage. ERA5 spans 1940-present; declared through the last complete year.
+    hindcast_range: [1940, 2025]
+
+obs/era5-land-monthly:
+  adapter: cds
+  cds_dataset: "reanalysis-era5-land-monthly-means"
+  product_type: "monthly_averaged_reanalysis"
+  # Higher-resolution (0.1°) land reanalysis, 1950-present. The land sibling of
+  # obs/era5 (single-levels, 0.25°) — used as the reference/truth for scoring
+  # downscaled precip (e.g. the SaWaM SEAS5-BCSD product). Land-only, so no SST.
+  # Same CDS request shape as obs/era5 (monthly_averaged_reanalysis), so no
+  # adapter changes. tp uses the same m→mm/day (×1000) convention as obs/era5.
+  # Cadence is explicit in the name (per the CHIRPS naming convention); daily
+  # (derived-era5-land-daily-statistics) and hourly (reanalysis-era5-land) are
+  # separate CDS datasets with different request shapes — future entries.
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tp
+      units: m
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+  grid:
+    lat_res: 0.1
+    lon_res: 0.1
+    # Reanalysis (observed) — hindcast_range is data coverage. ERA5-Land spans
+    # 1950-present; declared through the last complete year.
+    hindcast_range: [1950, 2025]
+
+# GFDL SPEAR / SPEARb (precip, temp, SST) via the Columbia CCSR successor (#14).
+#
+# PROVENANCE: mirror. CCSR (forecast.ccsr.columbia.edu) is an *aggregator* — the
+# IRI Data Library replacement — not the producing center. acmadDL prefers
+# original sources, so strictly the original here is GFDL (NOAA Open Data
+# Dissemination / GFDL THREDDS); if/when that adapter is built it should live
+# under its own channel, e.g. `gfdl/spear`, and this entry stays as the NMME-
+# program copy. CCSR is used because it is clean, standard OPeNDAP with NO
+# coupling to the old PyCPT-DL / IRI Ingrid stack (the CCSR adapter opens it
+# with stock xarray). The `nmme/` prefix denotes the NMME aggregated
+# distribution, which CCSR now is — so this naming is correct as-is.
+#
+# Adapter notes: plain-DAP URLs; the CCSR adapter decodes the "hours since 1960"
+# init axis and uses the self-describing target[S,L] variable for season
+# selection. Native CCSR variable names: prcp / t2m / sst. SPEARb SST is served
+# as SPEAR/sst (no separate SPEARb directory at CCSR).
+nmme/spear:
+  adapter: ccsr
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/NOAA-GFDL/SPEAR"
+  split_streams: true
+  single_year_fetch: true
+  variables:
+    precip:
+      native_name: pr
+      # CCSR serves monthly-TOTAL precip (mm/month), not a daily rate — verified
+      # 2026-06-04 via metadata (units attr "mm") + magnitude (EA MAM mean ~87 mm).
+      units: "mm"
+      target_units: "mm"
+    temp:
+      native_name: tas
+      # CCSR serves NMME 2 m temperature already in Celsius (declared
+      # degree_Celsius since the 2026-07 CMIP rename; previously no units attr),
+      # unlike the IRI/CDS sources which serve Kelvin. Declaring K here caused a
+      # double K->C conversion in normalize() -> sub-absolute-zero values.
+      units: C
+      target_units: C
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 30   # real-time forecast runs a larger ensemble than the hindcast (verified live 2026-06: NOAA-GFDL/SPEAR/forecast M=30)
+    hindcast_members: 15
+    hindcast_range: [1991, 2020]
+    forecast_range: [2021, null]   # real-time, ongoing (quarterly issuance since 2025)
+
+nmme/spear-hindcast:
+  alias_of: "nmme/spear"   # deprecated: hindcast is the same product, hindcast stream
+
+# SPEARb (SST predictor track). At CCSR the SST is served under the SPEAR tree
+# (there is no separate SPEARb directory); kept as a distinct product name for
+# PyCPT parity (PyCPT uses SPEARb.SST). Modeled like the other split-stream
+# models: one canonical entry where split_streams: true picks the forecast/ vs
+# hindcast/ subdir from the requested years, with -hindcast a deprecated alias.
+nmme/spearb:
+  adapter: ccsr
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/NOAA-GFDL/SPEAR"
+  split_streams: true
+  variables:
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 30   # real-time forecast runs a larger ensemble than the hindcast (verified live 2026-06: SPEAR/forecast/sst M=30)
+    hindcast_members: 15
+    hindcast_range: [1991, 2020]
+    forecast_range: [2021, null]   # real-time, ongoing
+
+nmme/spearb-hindcast:
+  alias_of: "nmme/spearb"   # deprecated: hindcast is the same product, hindcast stream
+
+# CanSIPS-IC4 via the Columbia CCSR successor (issue #14, #2).
+# PROVENANCE: mirror (CCSR aggregator, same as SPEAR above). The producing-center
+# original is ECCC's MSC Datamart, but that is GRIB2 (needs a cfgrib adapter) —
+# CCSR's clean OPeNDAP is preferred. An ECCC-original adapter, if built, would be
+# its own channel (e.g. `eccc/cansipsic4`). NB: CanSIPS also exists under the
+# Copernicus channel as c3s/eccc-cansips* — distinct distributions of the model.
+nmme/cansipsic4:
+  adapter: ccsr
+  source_url: "https://forecast.ccsr.columbia.edu/data/NMME/ECCC/CanSIPS-IC4"
+  split_streams: true
+  single_year_fetch: true
+  variables:
+    precip:
+      native_name: pr
+      # ECCC finished the CMOR migration (verified live 2026-08-11): BOTH
+      # streams now serve .../pr and the old .../hindcast/prcp path 404s, so
+      # the interim per-stream path_name override is gone. If the server
+      # flip-flops again, normalize's declared-name fallback keeps cached and
+      # fresh data readable either way.
+      # CCSR serves monthly-TOTAL precip (mm/month), not a daily rate — verified
+      # 2026-06-04 via metadata (units attr "mm") + magnitude (EA MAM mean ~87 mm).
+      units: "mm"
+      target_units: "mm"
+    temp:
+      native_name: tas
+      # CCSR serves NMME 2 m temperature already in Celsius (declared
+      # degree_Celsius since the 2026-07 CMIP rename; previously no units attr),
+      # unlike the IRI/CDS sources which serve Kelvin. Declaring K here caused a
+      # double K->C conversion in normalize() -> sub-absolute-zero values.
+      units: C
+      target_units: C
+    sst:
+      native_name: tos
+      # The CMIP rename also switched SST from Kelvin to Celsius on the
+      # server; normalize converts back so the delivered contract stays K.
+      units: C
+      target_units: K
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    forecast_members: 40
+    hindcast_members: 40
+    hindcast_range: [1990, 2024]
+    forecast_range: [2024, null]   # real-time, ongoing
+
+nmme/cansipsic4-hindcast:
+  alias_of: "nmme/cansipsic4"   # deprecated: hindcast is the same product, hindcast stream
+
+# NB: ACMAD's cmc1/cmc2 (CanCM3/CanCM4) are NOT fetched as raw IRIDL model output — those
+# models are retired and have no current forecast. ACMAD ingests them as CPC's pre-formatted
+# seasonal CPT files, along with the rest of its roster; use `acmaddl.cpc_nmme_predictor`
+# (acmaddl/cpc_nmme.py) for that native, exact, IRIDL-free source.
+
+# ============================================================================
+# ACMAD predictands (added on the `acmad` branch — ACMAD seasonal-forecast
+# replication). Observed rainfall the CPT/CCA outlook is calibrated against, from
+# NATIVE data stores (NOAA PSL / JASMIN) — no IRI Data Library dependency. Both
+# are OBSERVED gridded series: season selection is done downstream via
+# fetch(..., seasonal=...); coarsen with grid_res=/regrid_to= for CCA. The
+# CPC-merged-precip predictand is obs/cmap (below, NOAA PSL OpenDAP) — the
+# natively-served member of the CAMS-OPI lineage.
+# ============================================================================
+
+# TAMSAT v3.1 monthly rainfall (Univ. Reading) — ACMAD's second (land-only)
+# predictand. JASMIN public HTTP, one NetCDF per month. Native 0.0375deg over
+# Africa (~3.7M cells) — far too fine for CCA; coarsen (grid_res=0.5 /
+# regrid_to=) as the reproduction did.
+obs/tamsat:
+  adapter: http
+  source_url: "https://gws-access.jasmin.ac.uk/public/tamsat/rfe/data/v3.1/monthly"
+  file_pattern: "{year}/{month:02d}/rfe{year}_{month:02d}.v3.1.nc"
+  format: netcdf
+  request_interval: 0.5
+  variables:
+    precip:
+      native_name: rfe
+      units: "mm/month"
+      target_units: "mm/month"
+      fill_value: -999.0
+  grid:
+    lat_res: 0.0375
+    lon_res: 0.0375
+    hindcast_range: [1983, 2025]
+    temporal: monthly
+  notes: "TAMSAT v3.1 monthly RFE (Reading), JASMIN public. Land-only; coarsen for CCA."
+
+# CPC Merged Analysis of Precipitation (CMAP), standard gauge+satellite merge —
+# the natively-served NetCDF member of the CPC merged-precip lineage that ACMAD's
+# IRIDL-only CAMS-OPI belongs to. NOAA PSL THREDDS/OpenDAP (whole-file), 2.5deg
+# monthly, no auth and no IRIDL. Chunk reads (max_request_years) to dodge the DAP
+# truncation the PSL server does on long requests (same as ERSSTv5). Coarsen with
+# grid_res=/regrid_to= for the forecast grid.
+obs/cmap:
+  adapter: opendap
+  source_url: "https://psl.noaa.gov/thredds/dodsC/Datasets/cmap/std/precip.mon.mean.nc"
+  url_template: "{base}"
+  decode_times: true
+  max_request_years: 5
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 2.5
+    lon_res: 2.5
+    hindcast_range: [1979, 2026]
+    temporal: monthly
+  notes: "CPC CMAP standard (gauge+satellite) monthly precip, 2.5deg. NOAA PSL, no IRIDL. CAMS-OPI-lineage predictand."
+
+# CAMS-OPI v0208 — ACMAD's actual OPERATIONAL predictand. Served NATIVELY (no IRIDL)
+# as raw GrADS monthly binaries on CPC's public HTTP/FTP: one file per month, 7
+# float32 big-endian fields on a 2.5deg global grid, UNDEF -999. The merged product
+# is field index 3 ("comb" = blended CAMS+OPI), identical to IRIDL's .v0208/.mean/.prcp.
+# obs/cmap is the alternative CAMS-OPI-lineage product (NOAA PSL). Coarsen/interp with
+# grid_res=/regrid_to= for the CCA grid; season selection downstream via seasonal=.
+obs/cams-opi:
+  adapter: cpc_binary
+  source_url: "https://ftp.cpc.ncep.noaa.gov/precip/data-req/cams_opi_v0208"
+  file_pattern: "cams_opi_merged.{year}{month:02d}"
+  binary:
+    nx: 144
+    ny: 72
+    x0: 1.25        # lon 1.25..358.75 (0..360 convention)
+    dx: 2.5
+    y0: -88.75      # lat -88.75..88.75 (ascending)
+    dy: 2.5
+    n_fields: 7     # cams, camsn, opi, comb, xxxx, comba, gam
+    dtype: ">f4"    # big-endian float32
+    undef: -999.0
+  variables:
+    precip:
+      native_name: prcp
+      field_index: 3     # "comb": blended CAMS+OPI merged precip (mm/day)
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 2.5
+    lon_res: 2.5
+    hindcast_range: [1979, 2026]
+    temporal: monthly
+  notes: >-
+    CPC CAMS-OPI v0208 monthly merged precip (field "comb"), 2.5deg, native CPC
+    FTP/HTTP -- NO IRIDL. ACMAD's operational predictand (mm/day). Validated against
+    ACMAD's own camsopi CPT predictand: single-year ASO spatial patcorr 0.965 (same
+    product); rainy-region interannual-anomaly corr 0.83 vs 0.73 for the obs/cmap
+    alternative. Regrid to the forecast grid is a linear interp (grid_res=/regrid_to=);
+    ACMAD upsamples 2.5->0.5deg server-side (area-weighted), a minor interpolation-path
+    difference.

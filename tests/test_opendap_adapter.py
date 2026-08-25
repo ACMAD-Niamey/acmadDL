@@ -15,7 +15,7 @@ import xarray as xr
 def _capture_url(monkeypatch):
     """Patch the adapter's xr.open_dataset to record the opened URL and return a
     trivial dataset, so URL routing can be tested without network."""
-    from rosetta.adapters import opendap as opendap_mod
+    from acmaddl.adapters import opendap as opendap_mod
     captured = {}
 
     def fake_open(url, **kwargs):
@@ -37,7 +37,7 @@ _SPLIT_CFG = {
 
 
 def test_split_streams_routes_hindcast_year_to_hindcast(monkeypatch):
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     captured = _capture_url(monkeypatch)
     OPeNDAPAdapter().fetch_data(_SPLIT_CFG, "precip", date_range=(2010, 2010), region=None)
     assert captured["url"].endswith("/.NCEP-CFSv2/.HINDCAST/.PENTAD_SAMPLES/.MONTHLY/.prec/dods")
@@ -45,7 +45,7 @@ def test_split_streams_routes_hindcast_year_to_hindcast(monkeypatch):
 
 
 def test_split_streams_routes_forecast_year_to_forecast(monkeypatch):
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     captured = _capture_url(monkeypatch)
     OPeNDAPAdapter().fetch_data(_SPLIT_CFG, "precip", date_range=(2024, 2024), region=None)
     assert captured["url"].endswith("/.NCEP-CFSv2/.FORECAST/.PENTAD_SAMPLES/.MONTHLY/.prec/dods")
@@ -55,7 +55,7 @@ def test_split_streams_routes_forecast_year_to_forecast(monkeypatch):
 def test_no_split_streams_uses_source_url_verbatim(monkeypatch):
     """Without split_streams, the variable hangs directly off source_url (the
     existing non-CFSv2 IRI behaviour is unchanged)."""
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     captured = _capture_url(monkeypatch)
     cfg = {
         "adapter": "opendap",
@@ -94,8 +94,8 @@ def _ds_for_years_with_leads(years, months_init=1, n_members=28):
 
 
 def test_append_streams_concats_both_streams(monkeypatch):
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     calls = []
 
     def fake_open(url, **kw):
@@ -114,8 +114,8 @@ def test_append_streams_concats_both_streams(monkeypatch):
 
 
 def test_no_append_flag_single_stream(monkeypatch):
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     calls = []
     monkeypatch.setattr(opendap_mod.xr, "open_dataset",
                         lambda url, **kw: calls.append(url) or _ds_for_years([2009, 2010]))
@@ -134,8 +134,8 @@ def test_append_streams_boundary_overlap_year_comes_from_both_streams(monkeypatc
     (real, server-side) S-filter contributes only the inits it actually has --
     here simulated as HINDCAST having a Feb-2011 init and FORECAST having a
     separate Aug-2011 init. Both must survive the union with no double count."""
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
     calls = []
 
     def fake_open(url, **kw):
@@ -159,8 +159,8 @@ def test_append_streams_dedups_shared_init_on_concat(monkeypatch):
     overlap year -- not expected in practice, but must never double-count -- the
     concat must dedup rather than silently doubling that timestep's weight in
     downstream ensemble/mean math."""
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     def fake_open(url, **kw):
         # both streams return the identical 2011 (Feb) init plus their own year
@@ -179,8 +179,8 @@ def test_resolve_streams_tolerates_sparse_forecast_segment(monkeypatch):
     """A stream segment whose S-filter yields fewer inits than its nominal year
     span (e.g. FORECAST asked for 2011 but has no Jan-2011 init for a Jan-init
     request) must be tolerated -- contribute what it has, not error."""
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     def fake_open(url, **kw):
         if "HINDCAST" in url:
@@ -196,15 +196,15 @@ def test_resolve_streams_tolerates_sparse_forecast_segment(monkeypatch):
 
 def test_empty_forecast_segment_with_target_lead_months_drops_L_and_concats(monkeypatch):
     """Regression test for a real bug found against the live IRI endpoint: with
-    `target_lead_months` set (the normal case for any `rosetta.fetch(..., target=)`
+    `target_lead_months` set (the normal case for any `acmaddl.fetch(..., target=)`
     call), a FORECAST segment with ZERO matching inits (real case: a Jan-2011
     request -- FORECAST has no Jan-2011 init) must still have its L dim reduced
     away just like the non-empty HINDCAST segment, so the two segments' `prec`
     arrays have the SAME number of dimensions and `xr.concat` succeeds. Before
     the fix, the empty segment could keep L at full size (or the reduction could
     corrupt the M dim), producing a 4-dims-vs-5-dims (or dim-size) concat error."""
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     def fake_open(url, **kw):
         if "HINDCAST" in url:
@@ -231,8 +231,8 @@ def test_empty_segment_drops_L_even_when_no_lead_matches_at_all(monkeypatch):
     fixture doesn't reproduce, so `sel_L` computes empty), the S=0 segment must
     STILL collapse its L dim so its shape matches the populated sibling segment.
     Relying on `sel_L` being non-empty is what caused the original live failure."""
-    from rosetta.adapters import opendap as opendap_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     def fake_open(url, **kw):
         if "HINDCAST" in url:

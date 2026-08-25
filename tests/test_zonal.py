@@ -18,7 +18,7 @@ pytest.importorskip("rasterio")
 import geopandas as gpd  # noqa: E402
 from shapely.geometry import Point, box  # noqa: E402
 
-from rosetta.zonal import zonal  # noqa: E402
+from acmaddl.zonal import zonal  # noqa: E402
 
 
 @pytest.fixture

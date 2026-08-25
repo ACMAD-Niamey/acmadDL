@@ -1,4 +1,4 @@
-"""Tests for rosetta.validate — structural checks, comparison, and report I/O.
+"""Tests for acmaddl.validate — structural checks, comparison, and report I/O.
 
 Synthetic tests (no network):  pytest tests/test_validate.py
 Integration tests (network):   pytest tests/test_validate.py -m integration
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from rosetta.validate import (
+from acmaddl.validate import (
     ValidationResult,
     check_structure,
     compare,
@@ -277,7 +277,7 @@ class TestValidationResult:
             timestamp="2026-04-16T00:00:00+00:00",
         )
         entry = r.to_report_entry()
-        assert entry["rosetta_key"] == "c3s/ecmwf-monthly"
+        assert entry["acmaddl_key"] == "c3s/ecmwf-monthly"
         assert entry["r_timeseries"] == 0.9876
         assert entry["status"] == "PASS"
 
@@ -313,7 +313,7 @@ class TestReportIO:
 
             data = read_report(path)
             assert len(data) == 2
-            assert data[0]["rosetta_key"] == "c3s/ecmwf-monthly"
+            assert data[0]["acmaddl_key"] == "c3s/ecmwf-monthly"
             assert data[0]["r_timeseries"] == 1.0
             assert data[0]["status"] == "PASS"
             assert data[1]["status"] == "ROS_ONLY"
@@ -335,7 +335,7 @@ class TestReportIO:
 
             assert isinstance(data, list)
             entry = data[0]
-            assert "rosetta_key" in entry
+            assert "acmaddl_key" in entry
             assert "r_timeseries" in entry
             assert "status" in entry
             assert isinstance(entry["r_timeseries"], float)
@@ -351,7 +351,7 @@ class TestValidateProductSynthetic:
         """validate_product with reference='self' runs structural checks only."""
         def mock_fetch(*args, **kwargs):
             return good_gcm_ds
-        monkeypatch.setattr("rosetta.validate._fetch_rosetta_da",
+        monkeypatch.setattr("acmaddl.validate._fetch_acmaddl_da",
                             lambda *a, **kw: good_gcm_ds["precip"].mean("member", keep_attrs=True))
 
         result = validate_product(
@@ -365,7 +365,7 @@ class TestValidateProductSynthetic:
     def test_comparison_with_reference_da(self, monkeypatch, correlated_pair):
         """validate_product with reference_da runs comparison."""
         da1, da2 = correlated_pair
-        monkeypatch.setattr("rosetta.validate._fetch_rosetta_da", lambda *a, **kw: da1)
+        monkeypatch.setattr("acmaddl.validate._fetch_acmaddl_da", lambda *a, **kw: da1)
 
         result = validate_product(
             "nmme/cfsv2", variable="precip", reference="iri",

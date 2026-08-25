@@ -2,7 +2,7 @@
 grid (negative longitudes) must not NaN the western band. Added on `acmad`."""
 import numpy as np
 import xarray as xr
-from rosetta.fetch import _match_lon_convention
+from acmaddl.fetch import _match_lon_convention
 
 
 def test_0_360_source_to_negative_target_grid():

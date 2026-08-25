@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo: fetch seasonal data clipped to a country shapefile (rosetta-plan §5).
+"""Demo: fetch seasonal data clipped to a country shapefile (acmaddl-plan §5).
 
 Shows the two boundary rules for shapefile region input side by side:
 
@@ -18,7 +18,7 @@ Usage:
     scripts/demo_shapefile_region.py path/to/any.shp # any shapefile
 
 Requires the `geo` extra + matplotlib:
-    pip install 'rosetta[geo]' matplotlib
+    pip install 'acmadDL[geo]' matplotlib
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ matplotlib.use("Agg")  # headless: write PNG, no display needed
 import matplotlib.pyplot as plt
 import numpy as np
 
-import rosetta
+import acmaddl
 
 REPO = Path(__file__).resolve().parents[1]
 SHP_DIR = REPO / "data" / "shapefiles"
@@ -78,10 +78,10 @@ def main(argv=None) -> None:
           f"(both boundary modes)")
 
     # Same shapefile region, the two boundary rules side by side.
-    center_ds = rosetta.fetch(PRODUCT, VARIABLE, init=INIT, target=TARGET,
+    center_ds = acmaddl.fetch(PRODUCT, VARIABLE, init=INIT, target=TARGET,
                               hindcast=HINDCAST, region=str(shp),
                               boundary="center", verbose=False, progress=False)
-    cover_ds = rosetta.fetch(PRODUCT, VARIABLE, init=INIT, target=TARGET,
+    cover_ds = acmaddl.fetch(PRODUCT, VARIABLE, init=INIT, target=TARGET,
                              hindcast=HINDCAST, region=str(shp),
                              boundary="cover", verbose=False, progress=False)
 

@@ -8,7 +8,7 @@ network call is exercised in tests/test_integration.py.
 import pytest
 import xarray as xr
 
-from rosetta.adapters.cds import CDSAdapter
+from acmaddl.adapters.cds import CDSAdapter
 
 
 def _s2s_product_config(**overrides):
@@ -184,14 +184,14 @@ def test_s2s_request_rejects_malformed_init_date(monkeypatch):
 def test_fetch_routes_date_string_init_to_adapter(monkeypatch):
     """fetch(init='YYYY-MM-DD', product='c3s/ecmwf-s2s', ...) sets
     config['_init_date'] before invoking the adapter."""
-    import rosetta
+    import acmaddl
 
     fake = _FakeCDSClient()
     monkeypatch.setattr("cdsapi.Client", lambda *a, **kw: fake)
     # Skip the nuthatch cache wrapper to make assertions deterministic.
     # The cache stores results by key; bypassing it keeps the test focused
     # on request shape.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ecmwf-s2s",
         variable="precip",
         init="2026-05-12",
@@ -208,7 +208,7 @@ def test_fetch_routes_date_string_init_to_adapter(monkeypatch):
 
 def test_parse_init_accepts_ymd_and_ym():
     """parse_init returns a date-like for both YYYY-MM and YYYY-MM-DD."""
-    from rosetta.fetch import parse_init
+    from acmaddl.fetch import parse_init
 
     ym = parse_init("2026-05")
     ymd = parse_init("2026-05-12")
@@ -221,17 +221,17 @@ def test_two_s2s_fetches_with_different_init_dates_do_not_collide_in_cache(
 ):
     """Two fetch() calls with different init dates must result in two
     distinct adapter calls (no cache shadowing)."""
-    import rosetta
+    import acmaddl
 
     fake = _FakeCDSClient()
     monkeypatch.setattr("cdsapi.Client", lambda *a, **kw: fake)
 
     # Run the fetch with cache OFF first to establish a baseline call count.
-    rosetta.fetch(
+    acmaddl.fetch(
         product="c3s/ecmwf-s2s", variable="precip",
         init="2026-05-12", region=[-2, 2, 36, 40], cache=False, verbose=False,
     )
-    rosetta.fetch(
+    acmaddl.fetch(
         product="c3s/ecmwf-s2s", variable="precip",
         init="2026-05-15", region=[-2, 2, 36, 40], cache=False, verbose=False,
     )
@@ -249,7 +249,7 @@ def test_two_s2s_fetches_with_different_init_dates_distinct_in_cache(
     """Same as the previous test, but with cache=True. The two calls MUST
     still hit the adapter twice — otherwise the second call would silently
     return the first call's data, which is a correctness bug."""
-    import rosetta
+    import acmaddl
     from nuthatch.config import NuthatchConfig
 
     fake = _FakeCDSClient()
@@ -260,11 +260,11 @@ def test_two_s2s_fetches_with_different_init_dates_distinct_in_cache(
     monkeypatch.setattr(NuthatchConfig, "_find_nuthatch_config",
                         lambda self, p: None)
 
-    rosetta.fetch(
+    acmaddl.fetch(
         product="c3s/ecmwf-s2s", variable="precip",
         init="2026-05-12", region=[-2, 2, 36, 40], cache=True, verbose=False,
     )
-    rosetta.fetch(
+    acmaddl.fetch(
         product="c3s/ecmwf-s2s", variable="precip",
         init="2026-05-15", region=[-2, 2, 36, 40], cache=True, verbose=False,
     )
@@ -307,7 +307,7 @@ def _make_reforecast_like_dataset():
 
 def test_normalize_renames_hdate_to_year_with_integer_years():
     """hdate (datetime64) becomes year (int) after normalization."""
-    from rosetta.normalize import normalize
+    from acmaddl.normalize import normalize
     config = _s2s_product_config()
     ds = _make_reforecast_like_dataset()
     out = normalize(ds, config, "precip")
@@ -319,7 +319,7 @@ def test_normalize_renames_hdate_to_year_with_integer_years():
 
 def test_normalize_preserves_other_s2s_dims():
     """After hdate→year, the rest of the renames (number→member, step→lead_time) still work."""
-    from rosetta.normalize import normalize
+    from acmaddl.normalize import normalize
     config = _s2s_product_config()
     ds = _make_reforecast_like_dataset()
     out = normalize(ds, config, "precip")

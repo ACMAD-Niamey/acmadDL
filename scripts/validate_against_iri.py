@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Validate rosetta outputs against IRI Data Library.
+"""Validate acmaddl outputs against IRI Data Library.
 
-Fetches ensemble-mean seasonal precipitation from rosetta and from IRI,
+Fetches ensemble-mean seasonal precipitation from acmaddl and from IRI,
 then computes temporal and spatial Pearson correlations to reproduce the
 validation table from Emmett's comparison.
 
@@ -60,9 +60,9 @@ THREELETTERS = {
 MODELS = {
     # ---- NMME (IRI OPeNDAP) ----
     "CFSv2": {
-        "rosetta_product": "nmme/cfsv2",
+        "acmaddl_product": "nmme/cfsv2",
         "iri_type": "nmme",
-        # Rosetta uses PENTAD_SAMPLES/.MONTHLY; pycpt uses PENTAD_SAMPLES_FULL
+        # acmadDL uses PENTAD_SAMPLES/.MONTHLY; pycpt uses PENTAD_SAMPLES_FULL
         # (different sub-collection, but same data). Compare against same source
         # since PENTAD_SAMPLES_FULL has a different Ingrid path structure.
         "iri_url": f"{IRIDL_BASE}/SOURCES/.Models/.NMME/.NCEP-CFSv2/.HINDCAST/.PENTAD_SAMPLES/.MONTHLY",
@@ -71,7 +71,7 @@ MODELS = {
         "match": "exact",
     },
     "CCSM4": {
-        "rosetta_product": "nmme/ccsm4-hindcast",
+        "acmaddl_product": "nmme/ccsm4-hindcast",
         "iri_type": "nmme",
         "iri_url": f"{IRIDL_BASE}/SOURCES/.Models/.NMME/.COLA-RSMAS-CCSM4/.MONTHLY",
         "iri_var": "prec",
@@ -79,7 +79,7 @@ MODELS = {
         "match": "exact",
     },
     "GEOSS2S": {
-        "rosetta_product": "nmme/geoss2s-hindcast",
+        "acmaddl_product": "nmme/geoss2s-hindcast",
         "iri_type": "nmme",
         # NOTE: Use NASA-GEOSS2S/.HINDCAST (current model). The legacy
         # NASA-GMAO/.MONTHLY endpoint is a different model version.
@@ -89,9 +89,9 @@ MODELS = {
         "match": "exact",
     },
 
-    # ---- C3S via CDS (rosetta) vs IRI mirror ----
+    # ---- C3S via CDS (acmaddl) vs IRI mirror ----
     "ECMWF": {
-        "rosetta_product": "c3s/ecmwf-monthly",
+        "acmaddl_product": "c3s/ecmwf-monthly",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.ECMWF/.SEAS51_iri2/.appended",
         "iri_var": "prcp",
@@ -100,7 +100,7 @@ MODELS = {
         "match": "exact",
     },
     "MeteoFrance": {
-        "rosetta_product": "c3s/meteofrance",
+        "acmaddl_product": "c3s/meteofrance",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.Meteo_France/.System9/.hindcast",
         "iri_var": "prcp",
@@ -109,7 +109,7 @@ MODELS = {
         "match": "exact",
     },
     "CMCC": {
-        "rosetta_product": "c3s/cmcc",
+        "acmaddl_product": "c3s/cmcc",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.CMCC/.SPSv3p5/.hindcast",
         "iri_var": "prcp",
@@ -118,7 +118,7 @@ MODELS = {
         "match": "exact",
     },
     "CanSIPSv3": {
-        "rosetta_product": "c3s/eccc-cansipsv3",
+        "acmaddl_product": "c3s/eccc-cansipsv3",
         "iri_type": "nmme",
         # CanSIPS IC4 is under NMME on IRI, not C3S mirror
         "iri_url": f"{IRIDL_BASE}/SOURCES/.Models/.NMME/.CanSIPS-IC4/.HINDCAST/.MONTHLY",
@@ -127,8 +127,8 @@ MODELS = {
         "match": "exact",
     },
     "JMA": {
-        # Version-matched: CPS2 (rosetta) vs CPS2 (IRI)
-        "rosetta_product": "c3s/jma-cps2",
+        # Version-matched: CPS2 (acmaddl) vs CPS2 (IRI)
+        "acmaddl_product": "c3s/jma-cps2",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.JMA/.CPS2/.hindcast",
         "iri_var": "prec",
@@ -137,8 +137,8 @@ MODELS = {
         "match": "exact",
     },
     "JMA-CPS3": {
-        # Cross-version: CPS3 (rosetta) vs CPS2 (IRI) — expected r < 1.0
-        "rosetta_product": "c3s/jma",
+        # Cross-version: CPS3 (acmaddl) vs CPS2 (IRI) — expected r < 1.0
+        "acmaddl_product": "c3s/jma",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.JMA/.CPS2/.hindcast",
         "iri_var": "prec",
@@ -147,8 +147,8 @@ MODELS = {
         "match": "different",
     },
     "DWD": {
-        # Version-matched: GCFS 2.1 (rosetta) vs GCFS 2.1 (IRI)
-        "rosetta_product": "c3s/dwd-gcfs21",
+        # Version-matched: GCFS 2.1 (acmaddl) vs GCFS 2.1 (IRI)
+        "acmaddl_product": "c3s/dwd-gcfs21",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.DWD/.GCFS2p1/.hindcast",
         "iri_var": "prcp",
@@ -157,8 +157,8 @@ MODELS = {
         "match": "exact",
     },
     "DWD-GCFS22": {
-        # Cross-version: GCFS 2.2 (rosetta) vs GCFS 2.1 (IRI) — expected r < 1.0
-        "rosetta_product": "c3s/dwd",
+        # Cross-version: GCFS 2.2 (acmaddl) vs GCFS 2.1 (IRI) — expected r < 1.0
+        "acmaddl_product": "c3s/dwd",
         "iri_type": "c3s",
         "iri_path": "SOURCES/.EU/.Copernicus/.CDS/.C3S/.DWD/.GCFS2p1/.hindcast",
         "iri_var": "prcp",
@@ -169,37 +169,37 @@ MODELS = {
 
     # ---- ROS_ONLY (no IRI comparison available) ----
     "UKMO": {
-        "rosetta_product": "c3s/ukmo",
+        "acmaddl_product": "c3s/ukmo",
         "iri_type": None,
         "hindcast": (1993, 2016),
         "match": None,
     },
     "CanSIPS-IC3": {
-        "rosetta_product": "c3s/eccc-cansips",
+        "acmaddl_product": "c3s/eccc-cansips",
         "iri_type": None,
         "hindcast": (1993, 2010),
         "match": None,
     },
     "CESM1": {
-        "rosetta_product": "nmme/cesm1-hindcast",
+        "acmaddl_product": "nmme/cesm1-hindcast",
         "iri_type": None,
         "hindcast": (1991, 2016),
         "match": None,
     },
     "CanESM5": {
-        "rosetta_product": "nmme/canesm5-hindcast",
+        "acmaddl_product": "nmme/canesm5-hindcast",
         "iri_type": None,
         "hindcast": (1991, 2016),
         "match": None,
     },
     "GEM-NEMO": {
-        "rosetta_product": "nmme/gemnemo-hindcast",
+        "acmaddl_product": "nmme/gemnemo-hindcast",
         "iri_type": None,
         "hindcast": (1991, 2016),
         "match": None,
     },
     "GEM5.2-NEMO": {
-        "rosetta_product": "nmme/gem52nemo-hindcast",
+        "acmaddl_product": "nmme/gem52nemo-hindcast",
         "iri_type": None,
         "hindcast": (1991, 2016),
         "match": None,
@@ -207,7 +207,7 @@ MODELS = {
 
     # ---- Observational SST (monthly, no forecast structure) ----
     "ERSSTv5": {
-        "rosetta_product": "sst/ersst-v5",
+        "acmaddl_product": "sst/ersst-v5",
         "iri_type": "obs_sst",
         "iri_url": f"{IRIDL_BASE}/SOURCES/.NOAA/.NCDC/.ERSST/.version5/.sst",
         "iri_var": "sst",
@@ -242,7 +242,7 @@ def fetch_iri_nmme(model_cfg, init_month, lead_months, region=None):
     raw OPeNDAP which would pull all members client-side.
 
     Returns an xarray DataArray with dims (init_time, lat, lon) in seasonal mm,
-    matching rosetta's targeted-NMME contract.
+    matching acmaddl's targeted-NMME contract.
     """
     import requests
 
@@ -300,7 +300,7 @@ def fetch_iri_nmme(model_cfg, init_month, lead_months, region=None):
 
     # Decode S from "months since 1960-01-01" to datetime64
     if "S" in da.dims:
-        from rosetta.normalize import decode_months_since
+        from acmaddl.normalize import decode_months_since
         import pandas as pd
         units = ds["S"].attrs.get("units", "")
         if "months since" in units:
@@ -318,7 +318,7 @@ def fetch_iri_nmme(model_cfg, init_month, lead_months, region=None):
     if renames:
         da = da.rename(renames)
 
-    # IRI's lead-averaged NMME precip is a daily rate. Rosetta converts a
+    # IRI's lead-averaged NMME precip is a daily rate. acmadDL converts a
     # targeted NMME fetch to seasonal mm, so apply the same exact calendar
     # duration to the independent reference (separately for every init year).
     import calendar
@@ -398,7 +398,7 @@ def fetch_iri_c3s(model_cfg, init_month, lead_months, region=None):
 
     # Decode S from "months since 1960-01-01" to datetime64
     if "S" in da.dims:
-        from rosetta.normalize import decode_months_since
+        from acmaddl.normalize import decode_months_since
         import pandas as pd
         units = ds["S"].attrs.get("units", "")
         if "months since" in units:
@@ -416,7 +416,7 @@ def fetch_iri_c3s(model_cfg, init_month, lead_months, region=None):
     if renames:
         da = da.rename(renames)
 
-    # The IRI mirror returns a lead-averaged daily rate; match rosetta's
+    # The IRI mirror returns a lead-averaged daily rate; match acmaddl's
     # collapsed seasonal-total contract with the exact calendar duration.
     import calendar
     day_counts = []
@@ -506,16 +506,16 @@ def fetch_iri_obs_sst(model_cfg, region=None):
     return da
 
 
-def fetch_rosetta_obs_sst(model_cfg, region=None):
-    """Fetch monthly observational SST from Rosetta. Returns DataArray (time, lat, lon)."""
-    import rosetta
+def fetch_acmaddl_obs_sst(model_cfg, region=None):
+    """Fetch monthly observational SST from acmadDL. Returns DataArray (time, lat, lon)."""
+    import acmaddl
 
-    product = model_cfg["rosetta_product"]
+    product = model_cfg["acmaddl_product"]
     variable = model_cfg.get("variable", "sst")
     y0, y1 = model_cfg["hindcast"]
 
-    print(f"  [rosetta] fetching {product} ({y0}-{y1})")
-    ds = rosetta.fetch(
+    print(f"  [acmaddl] fetching {product} ({y0}-{y1})")
+    ds = acmaddl.fetch(
         product, variable,
         hindcast=(y0, y1),
         region=region,
@@ -524,26 +524,26 @@ def fetch_rosetta_obs_sst(model_cfg, region=None):
     da = ds[variable]
     if "lev" in da.dims:
         da = da.squeeze("lev", drop=True)
-    print(f"  [rosetta] got {dict(da.sizes)}")
+    print(f"  [acmaddl] got {dict(da.sizes)}")
     return da
 
 
 # ---------------------------------------------------------------------------
-# Rosetta fetch
+# acmadDL fetch
 # ---------------------------------------------------------------------------
 
-def fetch_rosetta(model_cfg, init_month, target, region=None):
-    """Fetch ensemble-mean seasonal forecast via rosetta.
+def fetch_acmaddl(model_cfg, init_month, target, region=None):
+    """Fetch ensemble-mean seasonal forecast via acmaddl.
 
     Returns an xarray DataArray with dims (init_time, lat, lon) in seasonal mm.
     """
-    import rosetta
+    import acmaddl
 
-    product = model_cfg["rosetta_product"]
+    product = model_cfg["acmaddl_product"]
     y0, y1 = model_cfg["hindcast"]
 
-    print(f"  [rosetta] fetching {product} ({y0}-{y1})")
-    ds = rosetta.fetch(
+    print(f"  [acmaddl] fetching {product} ({y0}-{y1})")
+    ds = acmaddl.fetch(
         product, "precip",
         init=f"2010-{init_month:02d}",  # year only sets month; hindcast overrides years
         target=target,
@@ -574,7 +574,7 @@ def fetch_rosetta(model_cfg, init_month, target, region=None):
     if "lead_time" in da.dims:
         da = da.mean("lead_time")
 
-    print(f"  [rosetta] got {dict(da.sizes)}")
+    print(f"  [acmaddl] got {dict(da.sizes)}")
     return da
 
 
@@ -586,7 +586,7 @@ def compute_correlations(ros_da, iri_da):
     """Compute temporal and spatial Pearson correlations.
 
     Args:
-        ros_da: DataArray (init_time, lat, lon) from rosetta
+        ros_da: DataArray (init_time, lat, lon) from acmaddl
         iri_da: DataArray (init_time, lat, lon) from IRI
 
     Returns:
@@ -648,7 +648,7 @@ def validate_model(name, model_cfg, init_month, target, lead_months, region):
     try:
         # Obs sources (no init/target/lead — just time-series comparison)
         if model_cfg["iri_type"] == "obs_sst":
-            ros_da = fetch_rosetta_obs_sst(model_cfg, region)
+            ros_da = fetch_acmaddl_obs_sst(model_cfg, region)
             iri_da = fetch_iri_obs_sst(model_cfg, region)
             # Rename time → init_time so existing compute_correlations works
             ros_da = ros_da.rename({"time": "init_time"})
@@ -664,8 +664,8 @@ def validate_model(name, model_cfg, init_month, target, lead_months, region):
                 status = "CHECK"
             return r_ts, r_spat, status, None
 
-        # Fetch rosetta
-        ros_da = fetch_rosetta(model_cfg, init_month, target, region)
+        # Fetch acmaddl
+        ros_da = fetch_acmaddl(model_cfg, init_month, target, region)
 
         # Fetch IRI
         if model_cfg["iri_type"] == "nmme":
@@ -698,7 +698,7 @@ def validate_model(name, model_cfg, init_month, target, lead_months, region):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Validate rosetta outputs against IRI Data Library"
+        description="Validate acmaddl outputs against IRI Data Library"
     )
     parser.add_argument(
         "--models", nargs="*", default=None,
@@ -729,7 +729,7 @@ def main():
     region = args.region
 
     # Compute lead months from init and target
-    from rosetta.fetch import parse_target, SEASON_MONTHS
+    from acmaddl.fetch import parse_target, SEASON_MONTHS
     if target.upper() in SEASON_MONTHS:
         s_month, e_month = SEASON_MONTHS[target.upper()]
         if s_month <= e_month:
@@ -784,7 +784,7 @@ def main():
 
     # Write JSON report for require-parity-verified.sh hook
     from datetime import datetime, timezone
-    from rosetta.validate import ValidationResult, write_report, read_report
+    from acmaddl.validate import ValidationResult, write_report, read_report
 
     # Merge with any prior entries so partial runs don't wipe the report
     report_path = Path(__file__).parent.parent / "output" / "validation_report.json"
@@ -792,7 +792,7 @@ def main():
     if report_path.exists():
         try:
             for e in read_report(str(report_path)):
-                prior[e.get("rosetta_key")] = e
+                prior[e.get("acmaddl_key")] = e
         except Exception:
             prior = {}
 
@@ -803,7 +803,7 @@ def main():
         if status in ("SKIP_CDS", "SKIP"):
             continue
         vr = ValidationResult(
-            product=cfg["rosetta_product"],
+            product=cfg["acmaddl_product"],
             variable=cfg.get("variable", "precip"),
             reference="iri" if cfg.get("iri_type") else "none",
             r_timeseries=float(r_ts) if r_ts is not None else float("nan"),
@@ -815,7 +815,7 @@ def main():
             hindcast=tuple(cfg["hindcast"]) if cfg.get("hindcast") else None,
             timestamp=now_iso,
         )
-        prior[cfg["rosetta_product"]] = vr.to_report_entry()
+        prior[cfg["acmaddl_product"]] = vr.to_report_entry()
         val_results.append(vr)
 
     # Write merged report (preserves old entries not re-run this session)
