@@ -1,59 +1,65 @@
-"""Rosetta — federated data integration for seasonal climate forecasting.
+"""Deprecated alias for :mod:`acmaddl`.
 
-Provides a unified fetch() API across CDS, OPeNDAP, NCEI, S3, HTTP, and
-Sheerwater data sources. All outputs are CF-aligned xarray Datasets.
+The project was renamed in 0.2.0: import name ``rosetta`` -> ``acmaddl``,
+distribution ``accord-rosetta`` -> ``acmadDL``. This package keeps existing
+code working — both ``import rosetta`` and deep imports like
+``from rosetta.adapters.base import AdapterBase`` — while warning that the old
+spelling is on its way out.
 
-Quick start:
-    import rosetta
-    ds = rosetta.fetch("c3s/ecmwf", variable="precip", init="2025-02",
-                       target="MAM", region=[-12, 6, 28, 42], hindcast=(2010, 2015))
+It is a redirect, not a copy. Every ``rosetta.X`` resolves to the *same* module
+object as ``acmaddl.X``, so identity holds across the two spellings and an
+exception raised through ``rosetta`` is caught by ``except
+acmaddl.errors.VariableNotSupported``. A second, parallel copy of the package
+would silently break that.
 """
+import importlib
+import importlib.abc
+import importlib.util
+import sys
+import warnings
 
-import os as _os
-from pathlib import Path as _Path
+import acmaddl
 
-# Pin nuthatch's cache to a local directory at import time.
-#
-# nuthatch discovers its config by walking *up* the filesystem from the calling
-# module and adopting the first pyproject.toml / nuthatch.toml it finds. When
-# rosetta is pip-installed, that search leaves site-packages/rosetta/ and can pick
-# up a nuthatch.toml shipped by a co-installed package — notably `sheerwater`, which
-# points the cache root at a private GCS bucket (gs://sheerwater-datalake/...).
-# Anyone without those credentials then hits a 401 / interactive prompt on their
-# first fetch(). We defend against that on two fronts:
-#   1. Ship src/rosetta/nuthatch.toml (see there) so the upward search finds *our*
-#      local config first and never reaches the ambient one.
-#   2. Pin the root/local cache filesystem here via the standard NUTHATCH_* env
-#      vars, since an installed package's own config is demoted to a "mirror" and
-#      cannot set the actual root.
-# The file:// prefix is required: without it fsspec's split_protocol() mis-parses
-# the '://' that adapter source URLs embed in cache-key paths. setdefault() means
-# ROSETTA_CACHE_DIR, the NUTHATCH_* env vars, and ~/.nuthatch.toml all still win.
-_cache_dir = _Path(
-    _os.environ.get("ROSETTA_CACHE_DIR", _Path.home() / ".nuthatch" / "caches")
-).expanduser()
-_cache_uri = f"file://{_cache_dir}"
-_os.environ.setdefault("NUTHATCH_ROOT_FILESYSTEM", _cache_uri)
-_os.environ.setdefault("NUTHATCH_LOCAL_FILESYSTEM", _cache_uri)
+_OLD = "rosetta"
+_NEW = "acmaddl"
 
-from . import catalog
-from .errors import VariableNotSupported
-from .fetch import fetch, parse_target, parse_init, season_to_months
-from .cpc_nmme import cpc_nmme_predictor  # noqa: F401
-from .assemble import assemble, obs_predictor
-from .zonal import zonal
-from .health import check_product, check_all_products
 
-__all__ = [
-    "catalog",
-    "fetch",
-    "VariableNotSupported",
-    "zonal",
-    "parse_target",
-    "season_to_months",
-    "parse_init",
-    "assemble",
-    "obs_predictor",
-    "check_product",
-    "check_all_products",
-]
+class _AliasLoader(importlib.abc.Loader):
+    """Resolve ``rosetta.X`` to the already-imported ``acmaddl.X`` object."""
+
+    def create_module(self, spec):
+        module = importlib.import_module(_NEW + spec.name[len(_OLD):])
+        # The import machinery calls _init_module_attrs() on whatever we return,
+        # which would stamp this module's __spec__/__loader__ with the aliased
+        # name. Stash the real ones so exec_module() can put them back.
+        self._real_attrs = (module.__spec__, getattr(module, "__loader__", None))
+        return module
+
+    def exec_module(self, module):
+        # Already executed under its real name; only undo the attribute stamping.
+        spec, loader = self._real_attrs
+        module.__spec__ = spec
+        module.__loader__ = loader
+
+
+class _AliasFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(_OLD + "."):
+            return importlib.util.spec_from_loader(fullname, _AliasLoader())
+        return None
+
+
+if not any(isinstance(finder, _AliasFinder) for finder in sys.meta_path):
+    sys.meta_path.insert(0, _AliasFinder())
+
+warnings.warn(
+    "The 'rosetta' package has been renamed to 'acmaddl' (distribution "
+    "'accord-rosetta' -> 'acmadDL'). 'import rosetta' still works but is "
+    "deprecated and will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+# Bind the top-level name to the real module object, so `rosetta.fetch is
+# acmaddl.fetch` and no attribute forwarding is needed.
+sys.modules[__name__] = acmaddl

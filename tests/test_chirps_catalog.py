@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from rosetta import catalog
+from acmaddl import catalog
 
 # The full expected CHIRPS product set after the naming rework.
 NATIVE = [
@@ -119,7 +119,7 @@ def test_native_chirps_netcdf_cap_concurrent_connections(prod):
 
 @pytest.mark.parametrize("prod", NATIVE)
 def test_native_config_health_ok(prod):
-    from rosetta.adapters import get_adapter
+    from acmaddl.adapters import get_adapter
     e = catalog.info(prod)
     result = get_adapter(e["adapter"]).health_check(e, probe_remote=False)
     assert result["healthy"] is True
@@ -141,7 +141,7 @@ def _write_tiny_raster(path):
 def test_open_raster_stamps_year_only_annual_filename(tmp_path):
     """Annual rasters (chirps-...-{year}.tif) carry no month; the adapter must
     stamp January 1 of that year rather than dropping the time coord."""
-    from rosetta.adapters.http import _open_cog_subset
+    from acmaddl.adapters.http import _open_cog_subset
     p = tmp_path / "chirps-v2.0.2017.tif"
     _write_tiny_raster(str(p))
     ds = _open_cog_subset(str(p), region=None, variable="precip")
@@ -151,7 +151,7 @@ def test_open_raster_stamps_year_only_annual_filename(tmp_path):
 
 def test_open_raster_still_stamps_month_for_monthly_filename(tmp_path):
     """Regression: the YYYY.MM monthly stamp must keep working unchanged."""
-    from rosetta.adapters.http import _open_cog_subset
+    from acmaddl.adapters.http import _open_cog_subset
     p = tmp_path / "chirps-v3.0.2017.05.tif"
     _write_tiny_raster(str(p))
     ds = _open_cog_subset(str(p), region=None, variable="precip")

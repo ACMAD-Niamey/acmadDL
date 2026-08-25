@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 import xarray as xr
 
-from rosetta.normalize import normalize
+from acmaddl.normalize import normalize
 
 
 def _forecast(values, init_times, lead_times):

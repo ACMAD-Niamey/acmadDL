@@ -1,4 +1,4 @@
-"""CCSR successor OPeNDAP adapter (rosetta #14 / §6.2).
+"""CCSR successor OPeNDAP adapter (acmaddl #14 / §6.2).
 
 The Columbia CCSR site replaced the sunset IRI Data Library. It serves the
 NMME models (SPEAR, CanSIPS-IC4, ...) over plain OPeNDAP with a different
@@ -68,15 +68,15 @@ def _mam_config(native="prcp", variable="precip"):
 
 
 def test_adapter_registered():
-    from rosetta.adapters import get_adapter
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters import get_adapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     assert isinstance(get_adapter("ccsr"), CCSRAdapter)
 
 
 def test_target_driven_season_selection_means_mam_leads():
     """For a Feb init, MAM = target months {3,4,5} = leads L∈{1,2,3}; the
     adapter must select exactly those leads and average them."""
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     ds = _synthetic_ccsr(init_month=2, n_leads=6)
     out = CCSRAdapter()._process(ds.copy(deep=True), "prcp", _mam_config(),
                                  date_range=(1991, 1993), region=None)
@@ -94,7 +94,7 @@ def test_target_driven_season_selection_means_mam_leads():
 
 
 def test_S_decoded_to_datetime_and_year_filtered():
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     ds = _synthetic_ccsr(init_years=(1991, 1992, 1993))
     out = CCSRAdapter()._process(ds.copy(deep=True), "prcp", _mam_config(),
                                  date_range=(1992, 1993), region=None)
@@ -103,7 +103,7 @@ def test_S_decoded_to_datetime_and_year_filtered():
 
 
 def test_longitude_wrapped_to_pm180_and_region_cropped():
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     ds = _synthetic_ccsr()
     out = CCSRAdapter()._process(ds.copy(deep=True), "prcp", _mam_config(),
                                  date_range=(1991, 1993), region=[-1, 1, 29, 41])
@@ -114,7 +114,7 @@ def test_longitude_wrapped_to_pm180_and_region_cropped():
 
 
 def test_health_check_config_and_missing_url():
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     a = CCSRAdapter()
     ok = a.health_check({"source_url": "https://example/x", "variables": {}}, probe_remote=False)
     assert ok["healthy"] is True and ok["kind"] == "config"
@@ -127,7 +127,7 @@ def test_decode_time_since_handles_hours_days_and_months():
     units. Most use 'hours since 1960-01-01' (IRI convention), but SPEAR and
     CanSIPS-IC4 use 'days since 1960-01-01'. The decoder must handle both (plus
     months) rather than assuming hours."""
-    from rosetta.adapters.ccsr import _decode_time_since
+    from acmaddl.adapters.ccsr import _decode_time_since
 
     hours = _decode_time_since("hours since 1960-01-01", np.array([0, 24, 48]))
     assert hours.astype("datetime64[D]")[2] == np.datetime64("1960-01-03")
@@ -145,7 +145,7 @@ def test_decode_time_since_handles_hours_days_and_months():
 def _capture_url(monkeypatch):
     """Patch the adapter's xr.open_dataset to record the opened URL and return a
     synthetic CCSR dataset, so URL routing can be tested without network."""
-    from rosetta.adapters import ccsr as ccsr_mod
+    from acmaddl.adapters import ccsr as ccsr_mod
     captured = {}
 
     def fake_open(url, **kwargs):
@@ -159,7 +159,7 @@ def _capture_url(monkeypatch):
 def test_split_streams_routes_to_forecast_or_hindcast(monkeypatch):
     """split_streams entries pick the forecast/ vs hindcast/ subdir from the
     requested years (past the hindcast range -> forecast)."""
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     captured = _capture_url(monkeypatch)
     cfg = {
         "adapter": "ccsr", "split_streams": True,
@@ -176,8 +176,8 @@ def test_split_streams_routes_to_forecast_or_hindcast(monkeypatch):
 
 def test_split_streams_support_stream_specific_variable_paths(monkeypatch):
     """CanSIPS precipitation uses /hindcast/prcp but /forecast/pr."""
-    from rosetta.adapters import ccsr as ccsr_mod
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters import ccsr as ccsr_mod
+    from acmaddl.adapters.ccsr import CCSRAdapter
     captured = {}
 
     def fake_open(url, **kwargs):
@@ -206,7 +206,7 @@ def test_split_streams_support_stream_specific_variable_paths(monkeypatch):
 
 def test_combined_stream_has_no_subdir(monkeypatch):
     """Without split_streams (CCSM4), the variable hangs directly off the base url."""
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters.ccsr import CCSRAdapter
     captured = _capture_url(monkeypatch)
     cfg = {
         "adapter": "ccsr",
@@ -220,8 +220,8 @@ def test_combined_stream_has_no_subdir(monkeypatch):
 
 
 def test_single_year_fetch_opens_once_per_year(monkeypatch):
-    from rosetta.adapters import ccsr as ccsr_mod
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters import ccsr as ccsr_mod
+    from acmaddl.adapters.ccsr import CCSRAdapter
     opened = []
 
     def fake_open(url, **kw):
@@ -247,8 +247,8 @@ def test_single_year_fetch_routes_each_year_to_its_own_stream(monkeypatch):
     boundary must route each year to its own subdir (year > hindcast_range[1] ->
     forecast), not pick one subdir from date_range[0] for the whole loop. The
     boundary year's other-stream years must not be silently dropped."""
-    from rosetta.adapters import ccsr as ccsr_mod
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters import ccsr as ccsr_mod
+    from acmaddl.adapters.ccsr import CCSRAdapter
     opened = []
 
     def fake_open(url, **kw):
@@ -281,8 +281,8 @@ def test_single_year_fetch_routes_each_year_to_its_own_stream(monkeypatch):
 def test_ccsr_hindcast_entries_live_fetch(product, variable, members, region):
     """End-to-end against the real CCSR server for each wired hindcast entry:
     decode + Feb-init filter + target-driven MAM lead selection + normalize."""
-    import rosetta
-    ds = rosetta.fetch(product, variable, init="2016-02", target="MAM",
+    import acmaddl
+    ds = acmaddl.fetch(product, variable, init="2016-02", target="MAM",
                        hindcast=(2014, 2016), region=region, cache=False, verbose=False)
     da = ds[variable] if variable in getattr(ds, "data_vars", {}) else ds
     assert ds.sizes.get("member") == members
@@ -295,8 +295,8 @@ def test_ccsr_hindcast_entries_live_fetch(product, variable, members, region):
 @pytest.mark.parametrize("product", ["nmme/spear", "nmme/spearb", "nmme/cansipsic4"])
 def test_ccsr_forecast_paths_reachable(product):
     """The CCSR forecast endpoints are live (catalog source_url opens)."""
-    from rosetta import catalog
-    from rosetta.adapters import get_adapter
+    from acmaddl import catalog
+    from acmaddl.adapters import get_adapter
     entry = catalog.info(product)
     result = get_adapter(entry["adapter"]).health_check(entry, probe_remote=True)
     assert result["healthy"] is True, result
@@ -313,8 +313,8 @@ def test_ccsr_temp_units_celsius_not_double_converted(product):
     produce sub-absolute-zero values (the bug produced mean ~ -280 C for
     physical ~ -7 C).
     """
-    from rosetta import catalog
-    from rosetta.normalize import normalize
+    from acmaddl import catalog
+    from acmaddl.normalize import normalize
 
     cfg = catalog.info(product)
     assert cfg["adapter"] == "ccsr"

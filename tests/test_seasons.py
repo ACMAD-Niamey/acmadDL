@@ -1,8 +1,8 @@
 """season_to_months: general contiguous-month season codes (v3 item F)."""
 import pytest
 
-from rosetta.fetch import SEASON_MONTHS, season_to_months
-from rosetta import parse_target
+from acmaddl.fetch import SEASON_MONTHS, season_to_months
+from acmaddl import parse_target
 
 
 def test_classic_codes_unchanged():

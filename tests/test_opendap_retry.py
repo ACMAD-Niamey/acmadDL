@@ -45,9 +45,9 @@ _OPENDAP_CFG = {
 def test_opendap_retries_on_transient_oserror(monkeypatch):
     """First xr.open_dataset raises OSError (NetCDF I/O failure); adapter
     retries and succeeds on the second attempt."""
-    from rosetta.adapters import opendap as opendap_mod
-    import rosetta.adapters._robust as robust_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    import acmaddl.adapters._robust as robust_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     calls = {"n": 0}
 
@@ -69,9 +69,9 @@ def test_opendap_retries_on_transient_oserror(monkeypatch):
 
 def test_opendap_does_not_retry_http_4xx(monkeypatch):
     """HTTP 4xx in the exception message is permanent — adapter must not retry."""
-    from rosetta.adapters import opendap as opendap_mod
-    import rosetta.adapters._robust as robust_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    import acmaddl.adapters._robust as robust_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     calls = {"n": 0}
 
@@ -90,9 +90,9 @@ def test_opendap_does_not_retry_http_4xx(monkeypatch):
 
 def test_opendap_exhausts_retries_then_raises(monkeypatch):
     """After max_retries is spent, the OSError propagates to the caller."""
-    from rosetta.adapters import opendap as opendap_mod
-    import rosetta.adapters._robust as robust_mod
-    from rosetta.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters import opendap as opendap_mod
+    import acmaddl.adapters._robust as robust_mod
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
 
     calls = {"n": 0}
 
@@ -116,9 +116,9 @@ def test_opendap_exhausts_retries_then_raises(monkeypatch):
 
 def test_ccsr_retries_on_transient_oserror(monkeypatch):
     """CCSR adapter retries a transient OSError on xr.open_dataset."""
-    from rosetta.adapters import ccsr as ccsr_mod
-    import rosetta.adapters._robust as robust_mod
-    from rosetta.adapters.ccsr import CCSRAdapter
+    from acmaddl.adapters import ccsr as ccsr_mod
+    import acmaddl.adapters._robust as robust_mod
+    from acmaddl.adapters.ccsr import CCSRAdapter
     from datetime import datetime
 
     calls = {"n": 0}

@@ -3,8 +3,8 @@ import numpy as np
 import xarray as xr
 from datetime import datetime
 
-from rosetta.normalize import normalize
-from rosetta import catalog
+from acmaddl.normalize import normalize
+from acmaddl import catalog
 
 
 def _member_ds(n_members, n_time=1):

@@ -10,11 +10,11 @@ import xarray as xr
 
 def test_cache_dir_recreated_after_nuthatch_tree_replaced(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    import rosetta.cpc_nmme as m
+    import acmaddl.cpc_nmme as m
 
     first = Path(m._cache_dir())
     assert first.is_dir()
-    assert first == tmp_path / ".nuthatch" / "rosetta" / "cpc_nmme"
+    assert first == tmp_path / ".nuthatch" / "acmaddl" / "cpc_nmme"
 
     # Colab / Shared Drive pattern: replace ~/.nuthatch after import.
     shutil.rmtree(tmp_path / ".nuthatch")
@@ -27,7 +27,7 @@ def test_cache_dir_recreated_after_nuthatch_tree_replaced(tmp_path, monkeypatch)
 
 def test_fetch_global_writes_after_cache_dir_removed(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    import rosetta.cpc_nmme as m
+    import acmaddl.cpc_nmme as m
 
     Path(m._cache_dir())
     shutil.rmtree(tmp_path / ".nuthatch")
@@ -43,5 +43,5 @@ def test_fetch_global_writes_after_cache_dir_removed(tmp_path, monkeypatch):
     hc, fc = m._fetch_global("cfsv2", "sst", "ASO", (1991, 1991), 2026)
     assert hc.sizes["year"] == 1
     assert fc.sizes["year"] == 1
-    cached = list((tmp_path / ".nuthatch" / "rosetta" / "cpc_nmme").glob("*.pkl"))
+    cached = list((tmp_path / ".nuthatch" / "acmaddl" / "cpc_nmme").glob("*.pkl"))
     assert len(cached) == 1

@@ -17,7 +17,7 @@ GCS bucket. Marked ``integration``+``network``; skipped in the default unit run.
 import numpy as np
 import pytest
 
-import rosetta
+import acmaddl
 
 # Small East-Africa bbox keeps the read tiny: the adapter fetches the global
 # store lazily and crops to this slab before materializing.
@@ -29,7 +29,7 @@ REGION = [-2, 2, 36, 40]
 def test_sheerwater_chirps_v3_daily_real_read():
     """obs/chirps-v3-daily-rhiza opens a real GCS Zarr store via the sheerwater
     library and returns finite, non-negative precip cropped to the bbox."""
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         "obs/chirps-v3-daily-rhiza",
         "precip",
         hindcast=(2010, 2010),

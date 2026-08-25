@@ -1,4 +1,4 @@
-import numpy as np, xarray as xr, pytest, rosetta
+import numpy as np, xarray as xr, pytest, acmaddl
 
 
 def _toy_monthly():  # 3 years of monthly precip on a coarse grid
@@ -10,12 +10,12 @@ def _toy_monthly():  # 3 years of monthly precip on a coarse grid
 
 
 def _patch_fetch_internals(monkeypatch):
-    # `rosetta.fetch` is shadowed by the re-exported `fetch()` function (see
-    # rosetta/__init__.py: `from .fetch import fetch`), so reach the actual
+    # `acmaddl.fetch` is shadowed by the re-exported `fetch()` function (see
+    # acmaddl/__init__.py: `from .fetch import fetch`), so reach the actual
     # submodule via sys.modules to monkeypatch its real module-level names.
     import sys
-    import rosetta.fetch as _  # ensure imported
-    fetchmod = sys.modules["rosetta.fetch"]
+    import acmaddl.fetch as _  # ensure imported
+    fetchmod = sys.modules["acmaddl.fetch"]
     monkeypatch.setattr(fetchmod, "_fetch_raw_cached",
                         lambda *a, **k: xr.Dataset({"precip": _toy_monthly()}))
     monkeypatch.setattr(fetchmod, "normalize", lambda ds, *a, **k: ds)
@@ -30,7 +30,7 @@ def _patch_fetch_internals(monkeypatch):
 
 def test_seasonal_mean_collapses_months_to_year(monkeypatch):
     _patch_fetch_internals(monkeypatch)
-    ds = rosetta.fetch("obs/chirps-v2-monthly", "precip", target="MAM",
+    ds = acmaddl.fetch("obs/chirps-v2-monthly", "precip", target="MAM",
                        region=[-2, 2, 20, 24], seasonal="mean", cache=False, verbose=False)
     assert "year" in ds["precip"].dims and "time" not in ds["precip"].dims
     assert list(ds["precip"].year.values) == [1993, 1994, 1995]
@@ -46,8 +46,8 @@ def test_seasonal_mean_wraparound_shifts_year_and_drops_incomplete(monkeypatch):
             * np.ones((1, lat.size, lon.size)))
     toy = xr.DataArray(vals, dims=("time", "lat", "lon"),
                        coords={"time": t, "lat": lat, "lon": lon})
-    import rosetta.fetch as _  # ensure imported
-    fetchmod = sys.modules["rosetta.fetch"]
+    import acmaddl.fetch as _  # ensure imported
+    fetchmod = sys.modules["acmaddl.fetch"]
     monkeypatch.setattr(fetchmod, "_fetch_raw_cached",
                         lambda *a, **k: xr.Dataset({"precip": toy}))
     monkeypatch.setattr(fetchmod, "normalize", lambda ds, *a, **k: ds)
@@ -55,7 +55,7 @@ def test_seasonal_mean_wraparound_shifts_year_and_drops_incomplete(monkeypatch):
         "fetch_data": staticmethod(lambda *a, **k: xr.Dataset({"precip": toy}))})()
     monkeypatch.setattr(fetchmod, "get_adapter", lambda name: fake)
 
-    ds = rosetta.fetch("obs/chirps-v2-monthly", "precip", target="NDJ",
+    ds = acmaddl.fetch("obs/chirps-v2-monthly", "precip", target="NDJ",
                        region=[-2, 2, 20, 24], seasonal="mean", cache=False, verbose=False)
     da = ds["precip"]
     # NDJ = Nov, Dec, Jan; the season is labelled by its Nov/Dec year, so the Jan
@@ -73,7 +73,7 @@ def test_seasonal_mean_wraparound_shifts_year_and_drops_incomplete(monkeypatch):
 def test_grid_res_and_regrid_to_are_mutually_exclusive(monkeypatch):
     _patch_fetch_internals(monkeypatch)
     with pytest.raises(ValueError, match="grid_res.*regrid_to|mutually exclusive"):
-        rosetta.fetch("obs/chirps-v2-monthly", "precip", target="MAM",
+        acmaddl.fetch("obs/chirps-v2-monthly", "precip", target="MAM",
                       grid_res=0.5, regrid_to=_toy_monthly(), cache=False, verbose=False)
 
 
@@ -84,8 +84,8 @@ def test_cover_buffer_clamps_longitude_to_pm180(monkeypatch):
     and CDS returned a degenerate 3-column sliver instead of the full grid.
     """
     import sys
-    import rosetta.fetch as _  # ensure imported
-    fetchmod = sys.modules["rosetta.fetch"]
+    import acmaddl.fetch as _  # ensure imported
+    fetchmod = sys.modules["acmaddl.fetch"]
 
     captured = {}
 
@@ -101,7 +101,7 @@ def test_cover_buffer_clamps_longitude_to_pm180(monkeypatch):
     monkeypatch.setattr(fetchmod, "_fetch_raw_cached", fake_raw)
     monkeypatch.setattr(fetchmod, "normalize", lambda ds, *a, **k: ds)
 
-    rosetta.fetch("c3s/cmcc-sps4", "precip", target="MAM",
+    acmaddl.fetch("c3s/cmcc-sps4", "precip", target="MAM",
                   region=[-30, 30, -180, 180], boundary="cover", region_buffer=1.5,
                   cache=True, verbose=False)
 

@@ -1,4 +1,4 @@
-"""rosetta.obs_predictor: observed field as a seasonal CCA predictor.
+"""acmaddl.obs_predictor: observed field as a seasonal CCA predictor.
 
 Added on the `acmad` branch. Uses a monkeypatched fetch (no network) to check the
 canonical (year, member, lat, lon) shaping and the hindcast/forecast-year split.
@@ -6,9 +6,9 @@ canonical (year, member, lat, lon) shaping and the hindcast/forecast-year split.
 import importlib
 import numpy as np
 import xarray as xr
-import rosetta
+import acmaddl
 
-assemble_mod = importlib.import_module("rosetta.assemble")  # the module, not the fn
+assemble_mod = importlib.import_module("acmaddl.assemble")  # the module, not the fn
 
 
 def _fake_fetch(product, variable, *, hindcast, **kw):
@@ -25,7 +25,7 @@ def _fake_fetch(product, variable, *, hindcast, **kw):
 
 def test_obs_predictor_shapes_and_forecast_split(monkeypatch):
     monkeypatch.setattr(assemble_mod, "fetch", _fake_fetch)
-    hcst, fcst = rosetta.obs_predictor(
+    hcst, fcst = acmaddl.obs_predictor(
         "obs/ersst-v5", "sst", target="ASO",
         hindcast=(1991, 2020), forecast_year=2026, region=[-35, 35, 0, 360])
 
@@ -47,7 +47,7 @@ def test_obs_predictor_accepts_months_form(monkeypatch):
         return _fake_fetch(product, variable, hindcast=hindcast, **kw)
 
     monkeypatch.setattr(assemble_mod, "fetch", _fake)
-    hcst, fcst = rosetta.obs_predictor(
+    hcst, fcst = acmaddl.obs_predictor(
         "obs/ersst-v5", "sst", months=[6],
         hindcast=(1991, 2020), forecast_year=2026, region=[-35, 35, 0, 360])
     assert captured.get("months") == [6] and captured.get("target") is None
@@ -58,7 +58,7 @@ def test_obs_predictor_accepts_months_form(monkeypatch):
 def test_obs_predictor_requires_exactly_one_of_target_or_months():
     import pytest
     with pytest.raises(ValueError, match="exactly one of"):
-        rosetta.obs_predictor("obs/ersst-v5", "sst", hindcast=(1991, 2020), forecast_year=2026)
+        acmaddl.obs_predictor("obs/ersst-v5", "sst", hindcast=(1991, 2020), forecast_year=2026)
     with pytest.raises(ValueError, match="exactly one of"):
-        rosetta.obs_predictor("obs/ersst-v5", "sst", target="ASO", months=[6],
+        acmaddl.obs_predictor("obs/ersst-v5", "sst", target="ASO", months=[6],
                               hindcast=(1991, 2020), forecast_year=2026)

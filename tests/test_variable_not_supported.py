@@ -10,8 +10,8 @@ the exception.
 """
 import pytest
 
-from rosetta import catalog
-from rosetta.errors import VariableNotSupported
+from acmaddl import catalog
+from acmaddl.errors import VariableNotSupported
 
 
 # nmme/spearb is the real case from the issue: catalog declares {sst} only.
@@ -19,10 +19,10 @@ UNSUPPORTED = ("nmme/spearb", "precip")
 
 
 def test_fetch_raises_variable_not_supported_instead_of_bare_keyerror():
-    import rosetta
+    import acmaddl
     product, variable = UNSUPPORTED
     with pytest.raises(VariableNotSupported):
-        rosetta.fetch(product, variable, init="2025-09", target="OND",
+        acmaddl.fetch(product, variable, init="2025-09", target="OND",
                       cache=False, verbose=False)
 
 
@@ -58,9 +58,9 @@ def test_fetch_validates_before_any_adapter_io(monkeypatch):
     data-availability problem.
     """
     import sys
-    import rosetta
-    import rosetta.fetch  # noqa: F401  (rosetta.fetch the *name* is the function)
-    fetch_mod = sys.modules["rosetta.fetch"]
+    import acmaddl
+    import acmaddl.fetch  # noqa: F401  (acmaddl.fetch the *name* is the function)
+    fetch_mod = sys.modules["acmaddl.fetch"]
 
     def _boom(*args, **kwargs):
         raise AssertionError("adapter must not be reached for an unsupported variable")
@@ -69,7 +69,7 @@ def test_fetch_validates_before_any_adapter_io(monkeypatch):
 
     product, variable = UNSUPPORTED
     with pytest.raises(VariableNotSupported):
-        rosetta.fetch(product, variable, init="2025-09", target="OND",
+        acmaddl.fetch(product, variable, init="2025-09", target="OND",
                       cache=False, verbose=False)
 
 
@@ -80,8 +80,8 @@ def test_assemble_validates_whole_roster_before_fetching_anything(monkeypatch):
     still download every model preceding the unsupported one.
     """
     import sys
-    import rosetta.assemble  # noqa: F401  (rosetta.assemble the *name* is the function)
-    assemble_mod = sys.modules["rosetta.assemble"]
+    import acmaddl.assemble  # noqa: F401  (acmaddl.assemble the *name* is the function)
+    assemble_mod = sys.modules["acmaddl.assemble"]
 
     calls = []
 
@@ -108,9 +108,9 @@ def test_assemble_validates_whole_roster_before_fetching_anything(monkeypatch):
 def test_supported_variable_still_reaches_the_adapter(monkeypatch):
     """The guard must be a capability check, not a new failure mode."""
     import sys
-    import rosetta
-    import rosetta.fetch  # noqa: F401
-    fetch_mod = sys.modules["rosetta.fetch"]
+    import acmaddl
+    import acmaddl.fetch  # noqa: F401
+    fetch_mod = sys.modules["acmaddl.fetch"]
 
     reached = []
 
@@ -122,7 +122,7 @@ def test_supported_variable_still_reaches_the_adapter(monkeypatch):
     monkeypatch.setattr(fetch_mod, "get_adapter", lambda name: _FakeAdapter())
 
     with pytest.raises(RuntimeError, match="stop here"):
-        rosetta.fetch("nmme/spearb", "sst", init="2025-09", target="OND",
+        acmaddl.fetch("nmme/spearb", "sst", init="2025-09", target="OND",
                       cache=False, verbose=False)
     assert reached == ["sst"]
 
@@ -145,15 +145,15 @@ def test_no_declared_variable_could_ever_have_been_undeclared():
     have completed a fetch — the check only makes that failure early and typed.
     """
     import inspect
-    from rosetta import normalize as normalize_mod
+    from acmaddl import normalize as normalize_mod
     src = inspect.getsource(normalize_mod.normalize)
     assert 'product_config["variables"][variable]' in src
 
 
 def test_assemble_with_a_fully_supported_roster_proceeds_to_fetch(monkeypatch):
     import sys
-    import rosetta.assemble  # noqa: F401
-    assemble_mod = sys.modules["rosetta.assemble"]
+    import acmaddl.assemble  # noqa: F401
+    assemble_mod = sys.modules["acmaddl.assemble"]
 
     fetched = []
 
@@ -184,8 +184,8 @@ def test_assemble_precheck_defers_unknown_products_to_fetch(monkeypatch):
     (it would break callers who stub fetch() out entirely).
     """
     import sys
-    import rosetta.assemble  # noqa: F401
-    assemble_mod = sys.modules["rosetta.assemble"]
+    import acmaddl.assemble  # noqa: F401
+    assemble_mod = sys.modules["acmaddl.assemble"]
 
     reached = []
     monkeypatch.setattr(assemble_mod, "fetch",
@@ -204,9 +204,9 @@ def test_assemble_precheck_defers_unknown_products_to_fetch(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_check_product_reports_capability_mismatch_distinctly():
-    import rosetta
+    import acmaddl
     product, variable = UNSUPPORTED
-    status = rosetta.check_product(product, variable=variable)
+    status = acmaddl.check_product(product, variable=variable)
     assert status["healthy"] is False
     assert status["kind"] == "capability"
     assert status["variable"] == variable
@@ -216,9 +216,9 @@ def test_check_product_reports_capability_mismatch_distinctly():
 
 def test_check_product_capability_result_keeps_the_standard_shape():
     """Callers iterate these dicts uniformly, so the usual keys must be present."""
-    import rosetta
+    import acmaddl
     product, variable = UNSUPPORTED
-    status = rosetta.check_product(product, variable=variable)
+    status = acmaddl.check_product(product, variable=variable)
     for key in ("product", "adapter", "checked_at", "healthy", "kind", "message",
                 "probe_remote"):
         assert key in status, key
@@ -231,9 +231,9 @@ def test_check_product_capability_mismatch_does_not_probe_remote(monkeypatch):
     """A permanent capability gap is answerable from the catalog alone — it must
     never cost a network probe, even when probe_remote=True."""
     import sys
-    import rosetta
-    import rosetta.health  # noqa: F401
-    health_mod = sys.modules["rosetta.health"]
+    import acmaddl
+    import acmaddl.health  # noqa: F401
+    health_mod = sys.modules["acmaddl.health"]
 
     def _boom(*args, **kwargs):
         raise AssertionError("no adapter probe for a capability mismatch")
@@ -241,22 +241,22 @@ def test_check_product_capability_mismatch_does_not_probe_remote(monkeypatch):
     monkeypatch.setattr(health_mod, "get_adapter", _boom)
 
     product, variable = UNSUPPORTED
-    status = rosetta.check_product(product, variable=variable, probe_remote=True)
+    status = acmaddl.check_product(product, variable=variable, probe_remote=True)
     assert status["kind"] == "capability"
 
 
 def test_check_product_with_a_supported_variable_still_checks_health():
-    import rosetta
-    status = rosetta.check_product("nmme/spearb", variable="sst")
+    import acmaddl
+    status = acmaddl.check_product("nmme/spearb", variable="sst")
     assert status["kind"] != "capability"
     assert status["healthy"] is True
 
 
 def test_check_product_without_a_variable_is_unchanged():
     """Backwards compatibility: the variable argument is opt-in."""
-    import rosetta
-    without = rosetta.check_product("nmme/spearb")
-    explicit_none = rosetta.check_product("nmme/spearb", variable=None)
+    import acmaddl
+    without = acmaddl.check_product("nmme/spearb")
+    explicit_none = acmaddl.check_product("nmme/spearb", variable=None)
     # checked_at is a wall-clock stamp; everything else must match exactly
     without.pop("checked_at"), explicit_none.pop("checked_at")
     assert without == explicit_none
@@ -265,11 +265,11 @@ def test_check_product_without_a_variable_is_unchanged():
 
 def test_check_all_products_threads_the_variable_through():
     import warnings
-    import rosetta
+    import acmaddl
     with warnings.catch_warnings():
         # deprecated aliases warn on resolution; that is not what this asserts
         warnings.simplefilter("ignore", DeprecationWarning)
         statuses = {s["product"]: s
-                    for s in rosetta.check_all_products(variable="precip")}
+                    for s in acmaddl.check_all_products(variable="precip")}
     assert statuses["nmme/spearb"]["kind"] == "capability"
     assert statuses["nmme/cfsv2"]["kind"] != "capability"

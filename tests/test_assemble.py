@@ -3,7 +3,7 @@ import importlib
 import numpy as np
 import xarray as xr
 
-import rosetta
+import acmaddl
 
 
 def _ym(years):  # (year, member, lat, lon) toy
@@ -14,11 +14,11 @@ def _ym(years):  # (year, member, lat, lon) toy
 
 
 def test_assemble_pairs_hindcast_and_forecast(monkeypatch):
-    # rosetta.assemble is shadowed by the re-exported `assemble()` function
-    # (see rosetta/__init__.py: `from .assemble import assemble`), so reach
+    # acmaddl.assemble is shadowed by the re-exported `assemble()` function
+    # (see acmaddl/__init__.py: `from .assemble import assemble`), so reach
     # the actual submodule via importlib to monkeypatch its real
     # module-level `fetch` name.
-    amod = importlib.import_module("rosetta.assemble")
+    amod = importlib.import_module("acmaddl.assemble")
 
     calls = []
 
@@ -29,7 +29,7 @@ def test_assemble_pairs_hindcast_and_forecast(monkeypatch):
 
     monkeypatch.setattr(amod, "fetch", fake_fetch)
     roster = [("ModelA", "nmme/a", (1993, 1995), (1993, 1997))]
-    out = rosetta.assemble(roster, "precip", init="2026-01", target="MAM", range_index=2)
+    out = acmaddl.assemble(roster, "precip", init="2026-01", target="MAM", range_index=2)
     assert set(out) == {"ModelA"}
     hcst, fcst = out["ModelA"]
     assert list(hcst.year.values) == [1993, 1994, 1995]
@@ -43,7 +43,7 @@ def test_assemble_adds_member_dim_when_fetch_lacks_one(monkeypatch):
     CFSv2) must still come out of assemble() with a `member` dim, since
     downstream consumers (deepscale/methods/cca.py) unconditionally do
     hindcast.mean("member")."""
-    amod = importlib.import_module("rosetta.assemble")
+    amod = importlib.import_module("acmaddl.assemble")
 
     def _no_member(years):  # (year, lat, lon) toy -- no member dim at all
         lat, lon = np.arange(-1, 2.0, 1.0), np.arange(20, 23.0, 1.0)
@@ -57,7 +57,7 @@ def test_assemble_adds_member_dim_when_fetch_lacks_one(monkeypatch):
 
     monkeypatch.setattr(amod, "fetch", fake_fetch)
     roster = [("ModelA", "nmme/a", (1993, 1995), (1993, 1997))]
-    out = rosetta.assemble(roster, "precip", init="2026-01", target="MAM", range_index=2)
+    out = acmaddl.assemble(roster, "precip", init="2026-01", target="MAM", range_index=2)
     hcst, fcst = out["ModelA"]
     assert "member" in hcst.dims and hcst.sizes["member"] == 1
     assert "member" in fcst.dims and fcst.sizes["member"] == 1

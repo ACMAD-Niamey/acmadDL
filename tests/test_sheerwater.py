@@ -17,7 +17,7 @@ def _make_raw_ds(variable="precip"):
 
 
 def test_sheerwater_adapter_fetch_calls_correct_function():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     raw = _make_raw_ds("precip")
     mock_fn = MagicMock(return_value=raw)
     entry = {
@@ -38,7 +38,7 @@ def test_sheerwater_adapter_fetch_calls_correct_function():
 
 
 def test_sheerwater_adapter_passes_region():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     raw = _make_raw_ds("precip")
     mock_fn = MagicMock(return_value=raw)
     entry = {
@@ -53,7 +53,7 @@ def test_sheerwater_adapter_passes_region():
         result = adapter.fetch_data(entry, "precip", date_range=(2010, 2010), region=[-2, 2, 36, 40])
     call_kwargs = mock_fn.call_args.kwargs
     # Sheerwater takes a named string region; the adapter translates a
-    # rosetta-style bbox list to a global fetch and crops the result.
+    # acmaddl-style bbox list to a global fetch and crops the result.
     assert call_kwargs["region"] == "global"
     # Result was cropped client-side to the bbox.
     assert float(result["lat"].min()) >= -2.0
@@ -64,7 +64,7 @@ def test_sheerwater_adapter_passes_region():
 
 def test_sheerwater_adapter_passes_string_region_unchanged():
     """A string region (e.g. 'africa') flows through to sheerwater unchanged."""
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     raw = _make_raw_ds("precip")
     mock_fn = MagicMock(return_value=raw)
     entry = {
@@ -82,7 +82,7 @@ def test_sheerwater_adapter_passes_string_region_unchanged():
 
 
 def test_sheerwater_adapter_passes_source_kwargs():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     raw = _make_raw_ds("precip")
     mock_fn = MagicMock(return_value=raw)
     entry = {
@@ -101,7 +101,7 @@ def test_sheerwater_adapter_passes_source_kwargs():
 
 
 def test_sheerwater_adapter_returns_xarray_dataset():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     raw = _make_raw_ds("precip")
     entry = {
         "source": "chirps_v3",
@@ -117,14 +117,14 @@ def test_sheerwater_adapter_returns_xarray_dataset():
 
 
 def test_get_adapter_sheerwater():
-    from rosetta.adapters import get_adapter
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters import get_adapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     adapter = get_adapter("sheerwater")
     assert isinstance(adapter, SheerwaterAdapter)
 
 
 def test_sheerwater_health_check_config_only():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     adapter = SheerwaterAdapter()
     entry = {
         "source": "chirps_v3",
@@ -138,7 +138,7 @@ def test_sheerwater_health_check_config_only():
 
 
 def test_sheerwater_health_check_missing_source():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     adapter = SheerwaterAdapter()
     result = adapter.health_check({}, probe_remote=False)
     assert result["healthy"] is False
@@ -146,7 +146,7 @@ def test_sheerwater_health_check_missing_source():
 
 
 def test_sheerwater_health_check_remote_requires_zarr_url():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     adapter = SheerwaterAdapter()
     entry = {"source": "chirps_v3", "variables": {}, "grid": {}}
     result = adapter.health_check(entry, probe_remote=True)
@@ -155,7 +155,7 @@ def test_sheerwater_health_check_remote_requires_zarr_url():
 
 
 def test_sheerwater_health_check_remote_success():
-    from rosetta.adapters.sheerwater import SheerwaterAdapter
+    from acmaddl.adapters.sheerwater import SheerwaterAdapter
     adapter = SheerwaterAdapter()
     entry = {
         "source": "chirps_v3",

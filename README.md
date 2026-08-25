@@ -1,25 +1,25 @@
-# Rosetta
+# acmadDL
 
 An API for fetching climate, environmental, and contextual datasets
 
-Rosetta is ACCORD's data adapter layer. A single `fetch()` call retrieves data from many different providers (Copernicus CDS, the ECMWF Data Store, OPeNDAP, HTTP, S3, and others) and returns it as a normalized xarray dataset with canonical names, units, and coordinates. Data stays at the source; Rosetta does not host a central copy of anything. Adding a new dataset or provider is a catalog and adapter change, not a rewrite of your workflow.
+acmadDL is ACCORD's data adapter layer. A single `fetch()` call retrieves data from many different providers (Copernicus CDS, the ECMWF Data Store, OPeNDAP, HTTP, S3, and others) and returns it as a normalized xarray dataset with canonical names, units, and coordinates. Data stays at the source; acmadDL does not host a central copy of anything. Adding a new dataset or provider is a catalog and adapter change, not a rewrite of your workflow.
 
 ## Installation
 
 ```bash
-pip install accord-rosetta
+pip install acmadDL
 ```
 
-The distribution is published as `accord-rosetta`; the import name is `rosetta`. Rosetta requires Python 3.12 or newer.
+The distribution is published as `acmadDL`; the import name is `acmaddl`. acmadDL requires Python 3.12 or newer.
 
 Most CDS-based products (`c3s/*`, `obs/era5`) need CDS or ECMWF Data Store credentials; see [CDS / ECDS setup](#cds--ecds-setup).
 
 ## Core API
 
 ```python
-import rosetta
+import acmaddl
 
-ds = rosetta.fetch(
+ds = acmaddl.fetch(
     product="nmme/cfsv2",
     variable="precip",
     init="2025-02",
@@ -36,9 +36,9 @@ You pass a canonical `product` and `variable` plus optional temporal and spatial
 Verify an install and list what is available:
 
 ```python
-import rosetta
-rosetta.check_all_products()          # config checks for every product
-rosetta.catalog.list_products()       # list product ids
+import acmaddl
+acmaddl.check_all_products()          # config checks for every product
+acmaddl.catalog.list_products()       # list product ids
 ```
 
 ### Normalized coordinates
@@ -65,13 +65,13 @@ Numeric time encodings (for example "months since 1960-01-01") are decoded to `d
 | shapefile | `region="kenya.shp"` | bounding box slices upstream; result masked to the polygon |
 | geometry | `region=gdf.geometry` | shapely geometry or geopandas `GeoSeries`, same masking |
 
-Shapefile and geometry inputs need the `geo` extra (`pip install 'accord-rosetta[geo]'`). The polygon is reprojected to EPSG:4326 and dissolved, so multi-feature files (for example an archipelago) clip correctly. Cells outside the polygon come back as `NaN`.
+Shapefile and geometry inputs need the `geo` extra (`pip install 'acmadDL[geo]'`). The polygon is reprojected to EPSG:4326 and dissolved, so multi-feature files (for example an archipelago) clip correctly. Cells outside the polygon come back as `NaN`.
 
 ```python
-import rosetta
+import acmaddl
 
 # Clip to a country boundary; values outside Kenya become NaN.
-ds = rosetta.fetch(
+ds = acmaddl.fetch(
     product="nmme/cfsv2",
     variable="precip",
     init="2025-02",
@@ -84,7 +84,7 @@ ds = rosetta.fetch(
 By default a grid cell is included only if its centre lies inside the region (`boundary="center"`, the xarray/CDO/rasterio convention, and unbiased for area means). Pass `boundary="cover"` to keep every cell the region touches (matches rasterio's `all_touched=True`), which is useful for display or coarse grids where center-based selection can drop a country's thin tips. This applies to bbox and shapefile/geometry inputs alike.
 
 ```python
-ds = rosetta.fetch(..., region="kenya.shp", boundary="cover")
+ds = acmaddl.fetch(..., region="kenya.shp", boundary="cover")
 ```
 
 Note: polygons crossing the plus/minus 180 degree antimeridian are not yet handled (the derived bounding box spans the full longitude range). Split such geometries at the antimeridian before passing them in.
@@ -94,24 +94,24 @@ Note: polygons crossing the plus/minus 180 degree antimeridian are not yet handl
 Seasonal forecasting workflows often use two predictor domains from the same model, for example a large sea-surface-temperature domain and a smaller regional precipitation domain. Make one `fetch()` call per domain; there is no combined helper, because the domains differ in extent and variable.
 
 ```python
-import rosetta
+import acmaddl
 
 # SST predictor: large tropical domain
-sst_predictor = rosetta.fetch(
+sst_predictor = acmaddl.fetch(
     product="nmme/geoss2s", variable="sst",
     init="2025-02", target="MAM",
     region=[-20, 20, 30, 180], hindcast=(1993, 2016),
 )
 
 # Precipitation predictor: regional domain
-prcp_predictor = rosetta.fetch(
+prcp_predictor = acmaddl.fetch(
     product="nmme/geoss2s", variable="precip",
     init="2025-02", target="MAM",
     region=[-20, 20, 10, 75], hindcast=(1993, 2016),
 )
 
 # Predictand: observations
-predictand = rosetta.fetch(
+predictand = acmaddl.fetch(
     product="obs/chirps-v2-monthly", variable="precip",
     target="MAM", region=[-12, 15, 22, 52], hindcast=(1993, 2016),
 )
@@ -120,18 +120,18 @@ predictand = rosetta.fetch(
 ### Health checks
 
 ```python
-import rosetta
+import acmaddl
 
-rosetta.check_product("nmme/cfsv2")             # one product, config only
-rosetta.check_all_products()                    # all products, config only
-rosetta.check_all_products(probe_remote=True)   # also probe the live source
+acmaddl.check_product("nmme/cfsv2")             # one product, config only
+acmaddl.check_all_products()                    # all products, config only
+acmaddl.check_all_products(probe_remote=True)   # also probe the live source
 ```
 
 Each result includes `product`, `adapter`, `healthy`, `kind`, `message`, and `checked_at`.
 
 ## Available products
 
-How to read the tables. Hindcast is each model's fixed reforecast period, not a fetch cap: real-time forecasts run past it to the present. Forecast is the live-verified real-time availability, shown as `year–present` (ongoing) or `start–end (retired)` when the pinned system version was superseded (hindcasts still fetch, but no new forecasts issue). Members (F/H) are the real-time-forecast and reforecast ensemble sizes, which differ. `†` marks a deprecated access route. Full field conventions are documented at the top of [`src/rosetta/catalog.yaml`](src/rosetta/catalog.yaml).
+How to read the tables. Hindcast is each model's fixed reforecast period, not a fetch cap: real-time forecasts run past it to the present. Forecast is the live-verified real-time availability, shown as `year–present` (ongoing) or `start–end (retired)` when the pinned system version was superseded (hindcasts still fetch, but no new forecasts issue). Members (F/H) are the real-time-forecast and reforecast ensemble sizes, which differ. `†` marks a deprecated access route. Full field conventions are documented at the top of [`src/acmaddl/catalog.yaml`](src/acmaddl/catalog.yaml).
 
 Several C3S entries pin a system version whose real-time stream has ended (a 2026 forecast init returns no data); they still fetch hindcasts. CMCC's live stream has moved to `c3s/cmcc-sps4`. JMA and UKMO do not yet have an active-forecast entry on their current systems (JMA CPS4, UKMO 605).
 
@@ -219,7 +219,7 @@ Output is always NetCDF (extensible to Zarr and GeoTIFF).
 
 ## CDS / ECDS setup
 
-Rosetta's `cds` adapter talks to two distinct ECMWF endpoints, which are separate services with separate accounts, API keys, and licence-acceptance flows:
+acmadDL's `cds` adapter talks to two distinct ECMWF endpoints, which are separate services with separate accounts, API keys, and licence-acceptance flows:
 
 - Copernicus Climate Data Store (`cds.climate.copernicus.eu`): most `c3s/*` products and `obs/era5`.
 - ECMWF Data Store (`ecds.ecmwf.int`): the newer service, currently used by `c3s/ecmwf-s2s`.
@@ -240,7 +240,7 @@ For Copernicus CDS products (all `c3s/*` except `c3s/ecmwf-s2s`, plus `obs/era5`
    EOF
    ```
 
-3. Accept the required dataset licences in the CDS web UI before your first download. Each dataset page has a "Terms of use" section you tick once per account. If `rosetta.fetch()` fails with a 403, the error names the dataset(s) still missing acceptance.
+3. Accept the required dataset licences in the CDS web UI before your first download. Each dataset page has a "Terms of use" section you tick once per account. If `acmaddl.fetch()` fails with a 403, the error names the dataset(s) still missing acceptance.
 
 ### ECMWF Data Store (ECDS) setup
 
@@ -270,22 +270,22 @@ Required for `c3s/ecmwf-s2s` (and any future product whose catalog entry uses `c
 
 ## Cache configuration
 
-Rosetta caches adapter downloads locally using [Nuthatch](https://github.com/rhiza-research/nuthatch). Cache files live in `~/.nuthatch/rosetta` by default (configured in `pyproject.toml`).
+acmadDL caches adapter downloads locally using [Nuthatch](https://github.com/rhiza-research/nuthatch). Cache files live in `~/.nuthatch/acmaddl` by default (configured in `pyproject.toml`).
 
 ```bash
-rosetta cache list                        # inspect the cache
-rosetta cache clear                       # clear everything
-rosetta cache clear --product nmme/cfsv2  # clear one product (with confirmation)
+acmaddl cache list                        # inspect the cache
+acmaddl cache clear                       # clear everything
+acmaddl cache clear --product nmme/cfsv2  # clear one product (with confirmation)
 ```
 
 ## Development setup
 
 ```bash
-git clone https://github.com/accord-research/rosetta.git
-cd rosetta
+git clone https://github.com/ACMAD-Niamey/acmadDL.git
+cd acmadDL
 uv sync
 ```
 
 ## Relationship to DeepScale
 
-Rosetta handles ingestion and normalization; [DeepScale](https://github.com/accord-research/deepscale) handles downscaling and skill evaluation. Their interface is standardized xarray.
+acmadDL handles ingestion and normalization; [DeepScale](https://github.com/accord-research/deepscale) handles downscaling and skill evaluation. Their interface is standardized xarray.

@@ -7,7 +7,7 @@ Run non-CDS:   pytest -m "integration and not cds" tests/test_integration.py
 """
 
 import pytest
-import rosetta
+import acmaddl
 
 # Small region (East Africa) to keep downloads minimal
 REGION = [-2, 2, 36, 40]
@@ -32,7 +32,7 @@ def _check_dataset(ds, variable, region=None):
 @pytest.mark.network
 def test_fetch_nmme_cfsv2_precip():
     # nmme/cfsv2 is the hindcast entry (1982 to 2011-03); use an in-range init.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/cfsv2",
         variable="precip",
         init="2010-01",
@@ -47,7 +47,7 @@ def test_fetch_nmme_cfsv2_precip():
 @pytest.mark.network
 def test_fetch_nmme_cfsv2_temp():
     # nmme/cfsv2 is the hindcast entry (1982 to 2011-03); use an in-range init.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/cfsv2",
         variable="temp",
         init="2010-01",
@@ -64,7 +64,7 @@ def test_fetch_nmme_cfsv2_forecast_precip():
     # nmme/cfsv2-forecast is the live real-time stream (2011-04 to present), so a
     # recent init like 2024-01 is in range. Covers the forecast endpoint, which
     # the hindcast tests above do not exercise.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/cfsv2-forecast",
         variable="precip",
         init="2024-01",
@@ -85,19 +85,19 @@ def test_fetch_nmme_cfsv2_routes_streams_and_forecast_sst():
     tests/test_opendap_adapter.py)."""
     OCEAN = [-5, 5, 55, 70]   # sst needs an ocean bbox
     # Hindcast-year init -> .HINDCAST stream.
-    h = rosetta.fetch("nmme/cfsv2", "precip", init="2010-01", target="MAM",
+    h = acmaddl.fetch("nmme/cfsv2", "precip", init="2010-01", target="MAM",
                       region=REGION, cache=False, verbose=False)
     _check_dataset(h, "precip", REGION)
     assert h["precip"].attrs["units"] == "mm"
     assert h.sizes["member"] == 24
     # Forecast-year init via the SAME id -> .FORECAST stream.
-    f = rosetta.fetch("nmme/cfsv2", "precip", init="2024-01", target="MAM",
+    f = acmaddl.fetch("nmme/cfsv2", "precip", init="2024-01", target="MAM",
                       region=REGION, cache=False, verbose=False)
     _check_dataset(f, "precip", REGION)
     assert f["precip"].attrs["units"] == "mm"
     assert f.sizes["member"] == 24
     # Forecast sst -- previously unavailable; symmetric across streams now.
-    s = rosetta.fetch("nmme/cfsv2", "sst", init="2024-01", target="MAM",
+    s = acmaddl.fetch("nmme/cfsv2", "sst", init="2024-01", target="MAM",
                       region=OCEAN, cache=False, verbose=False)
     assert "sst" in s
     assert "member" in s.dims
@@ -114,7 +114,7 @@ def test_cfsv2_jan_init_has_consecutive_years_incl_2011():
     _resolve_streams fetches that year from BOTH streams; this end-to-end fetch
     must return consecutive years including a real (non-NaN) 2011."""
     import numpy as np
-    da = rosetta.fetch("nmme/cfsv2", "precip", init="2026-01", target="MAM",
+    da = acmaddl.fetch("nmme/cfsv2", "precip", init="2026-01", target="MAM",
                        hindcast=(2009, 2013), region=[-30, 30, -180, 180],
                        year_index=True, boundary="center", cache=False, verbose=False)["precip"]
     yrs = [int(y) for y in da.year.values]
@@ -129,7 +129,7 @@ def test_cfsv2_jan_init_has_consecutive_years_incl_2011():
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_nmme_ccsm4_precip():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/ccsm4",
         variable="precip",
         init="2024-01",
@@ -148,7 +148,7 @@ def test_fetch_nmme_ccsm4_precip():
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_nmme_ccsm4_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/ccsm4",
         variable="temp",
         init="2024-01",
@@ -165,7 +165,7 @@ def test_fetch_nmme_ccsm4_temp():
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_nmme_geoss2s_precip():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/geoss2s",
         variable="precip",
         init="2024-01",
@@ -184,7 +184,7 @@ def test_fetch_nmme_geoss2s_precip():
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_nmme_geoss2s_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="nmme/geoss2s",
         variable="temp",
         init="2024-01",
@@ -215,7 +215,7 @@ _CHIRPS_NATIVE_RASTER = [
 @pytest.mark.network
 @pytest.mark.parametrize("product, kwargs, units", _CHIRPS_NATIVE_RASTER)
 def test_fetch_chirps_native_raster(product, kwargs, units):
-    ds = rosetta.fetch(product=product, variable="precip", verbose=True, **kwargs)
+    ds = acmaddl.fetch(product=product, variable="precip", verbose=True, **kwargs)
     _check_dataset(ds, "precip", REGION)
     assert ds["precip"].attrs["units"] == units
 
@@ -227,7 +227,7 @@ def test_fetch_chirps_native_dekad_netcdf():
     # cropped. v2 dekad is the smallest (~160 MiB/yr) and exercises the netcdf
     # cadence path end to end. v3-daily is deliberately NOT tested here — its
     # per-year NetCDF is ~23.5 GiB; use obs/chirps-v3-daily-rhiza for daily.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/chirps-v2-dekad",
         variable="precip",
         hindcast=(2020, 2020),
@@ -339,7 +339,7 @@ def _local_netcdf_config(base_url, **overrides):
 def test_http_adapter_retries_recover_against_real_flaky_server(tmp_path):
     """End-to-end: real HTTP requests hit a 503-then-200 server, retries
     absorb the failures, all 12 months land cleanly."""
-    from rosetta.adapters.http import HTTPAdapter
+    from acmaddl.adapters.http import HTTPAdapter
     for month in range(1, 13):
         _make_tiny_netcdf(str(tmp_path / f"fake-2010.{month:02d}.nc"), 2010, month)
     server = _FlakyServer(str(tmp_path), fail_first_n=2)
@@ -362,7 +362,7 @@ def test_http_adapter_retries_recover_against_real_flaky_server(tmp_path):
 def test_http_adapter_retries_exhaust_against_persistent_failure(tmp_path):
     """When the retry budget is exhausted, strict mode raises rather than
     quietly returning a partial dataset."""
-    from rosetta.adapters.http import HTTPAdapter
+    from acmaddl.adapters.http import HTTPAdapter
     for month in range(1, 13):
         _make_tiny_netcdf(str(tmp_path / f"fake-2010.{month:02d}.nc"), 2010, month)
     server = _FlakyServer(str(tmp_path), fail_first_n=10)
@@ -384,7 +384,7 @@ def test_http_adapter_rate_limiter_paces_real_requests(tmp_path):
     """request_interval enforces a real wallclock floor between file opens
     even when worker threads would otherwise fire them concurrently."""
     import time as _time
-    from rosetta.adapters.http import HTTPAdapter
+    from acmaddl.adapters.http import HTTPAdapter
     for month in range(1, 13):
         _make_tiny_netcdf(str(tmp_path / f"fake-2010.{month:02d}.nc"), 2010, month)
     server = _FlakyServer(str(tmp_path), fail_first_n=0)
@@ -414,7 +414,7 @@ def test_http_adapter_rate_limiter_paces_real_requests(tmp_path):
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_ersst_v5_east_africa_recent():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/ersst-v5",
         variable="sst",
         hindcast=(2020, 2020),
@@ -433,7 +433,7 @@ def test_fetch_ersst_v5_east_africa_recent():
 def test_fetch_ersst_v5_west_pacific_historical():
     # Warm-pool region, well inside 0..360 longitude convention
     region = [-10, 10, 140, 180]
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/ersst-v5",
         variable="sst",
         hindcast=(2000, 2000),
@@ -450,7 +450,7 @@ def test_fetch_ersst_v5_west_pacific_historical():
 @pytest.mark.integration
 @pytest.mark.network
 def test_fetch_ersst_v5_multiyear_timeseries():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/ersst-v5",
         variable="sst",
         hindcast=(2010, 2012),
@@ -471,7 +471,7 @@ def test_fetch_ersst_v5_multiyear_timeseries():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_c3s_ecmwf_precip():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ecmwf",
         variable="precip",
         init="2000-01",
@@ -491,7 +491,7 @@ def test_fetch_c3s_ecmwf_precip():
 @pytest.mark.parametrize("product", ["c3s/ecmwf-monthly", "c3s/ecmwf"])
 def test_c3s_collapsed_seasonal_precip_is_mm(product):
     """Monthly-rate and daily-deaccumulated CDS paths share the mm contract."""
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product=product,
         variable="precip",
         init="2000-01",
@@ -513,7 +513,7 @@ def test_c3s_collapsed_seasonal_precip_is_mm(product):
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_c3s_ecmwf_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ecmwf",
         variable="temp",
         init="2000-01",
@@ -534,12 +534,12 @@ def test_fetch_c3s_ecmwf_precip_no_target_through_cache():
     """Reproduce issue #24: daily CDS fetch hangs in the nuthatch cache layer.
 
     Emmett's exact reproduction:
-        rosetta.fetch('c3s/ecmwf', 'precip', init='2026-02', region=[-13, 23, 21, 52])
+        acmaddl.fetch('c3s/ecmwf', 'precip', init='2026-02', region=[-13, 23, 21, 52])
 
     Without `target`, fetch.py leaves `leadtime_hour` unset, so the CDS adapter
     (cds.py:92-93) falls back to the default 214-day range × 51 members — a much
     larger payload than the targeted daily tests above. Reported symptom: 0% CPU
-    indefinitely after the `[rosetta:cds] download complete` log, with the cdsapi
+    indefinitely after the `[acmaddl:cds] download complete` log, with the cdsapi
     TCP socket in CLOSE_WAIT.
 
     cache=True (default) so we exercise the nuthatch write path. A SIGALRM-based
@@ -552,13 +552,13 @@ def test_fetch_c3s_ecmwf_precip_no_target_through_cache():
 
     def _on_alarm(signum, frame):
         raise TimeoutError(
-            "rosetta.fetch hung past 1800s after CDS download — see issue #24"
+            "acmaddl.fetch hung past 1800s after CDS download — see issue #24"
         )
 
     old_handler = signal.signal(signal.SIGALRM, _on_alarm)
     signal.alarm(1800)
     try:
-        ds = rosetta.fetch(
+        ds = acmaddl.fetch(
             product="c3s/ecmwf",
             variable="precip",
             init="2026-02",
@@ -578,7 +578,7 @@ def test_fetch_c3s_ecmwf_precip_no_target_through_cache():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_c3s_ecmwf_monthly_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ecmwf-monthly",
         variable="temp",
         init="2024-01",
@@ -599,7 +599,7 @@ def test_fetch_c3s_ecmwf_s2s_precip():
     not the Copernicus CDS one). The catalog entry overrides cds_url to point
     at the right endpoint; the user's key in ~/.cdsapirc must match.
     """
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ecmwf-s2s",
         variable="precip",
         init="2026-05-18",       # a recent Monday; bump if archive cycles this out
@@ -609,7 +609,7 @@ def test_fetch_c3s_ecmwf_s2s_precip():
     _check_dataset(ds, "precip", REGION)
     assert ds["precip"].attrs["units"] == "mm/day"
     # S2S forecasts out to ~46 days at 24h steps. After deaccumulation
-    # rosetta drops the first step, so we expect ~46 lead_time entries.
+    # acmaddl drops the first step, so we expect ~46 lead_time entries.
     assert ds.sizes["lead_time"] >= 20
     assert ds.sizes["member"] >= 2          # perturbed ensemble has 50+
     assert "init_time" in ds.coords          # scalar issuance date
@@ -620,7 +620,7 @@ def test_fetch_c3s_ecmwf_s2s_precip():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_eccc_cansips_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/eccc-cansips",
         variable="temp",
         init="2000-01",
@@ -638,7 +638,7 @@ def test_fetch_eccc_cansips_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_eccc_cansipsv3_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/eccc-cansipsv3",
         variable="temp",
         init="2000-01",
@@ -656,7 +656,7 @@ def test_fetch_eccc_cansipsv3_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_meteofrance_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/meteofrance",
         variable="temp",
         init="2000-01",
@@ -674,7 +674,7 @@ def test_fetch_meteofrance_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_cmcc_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/cmcc",
         variable="temp",
         init="2000-01",
@@ -699,7 +699,7 @@ SST_OCEAN = [-5, 5, 55, 70]   # Arabian Sea
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_cmcc_sps4_precip_hindcast():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/cmcc-sps4",
         variable="precip",
         init="2003-11",
@@ -717,7 +717,7 @@ def test_fetch_cmcc_sps4_precip_hindcast():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_cmcc_sps4_sst_hindcast():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/cmcc-sps4",
         variable="sst",
         init="2003-11",
@@ -736,7 +736,7 @@ def test_fetch_cmcc_sps4_sst_hindcast():
 @pytest.mark.cds
 def test_fetch_cmcc_sps4_precip_realtime_forecast():
     # 2025-11 is in forecast_range [2025, null]; real-time SPS4 runs 50 members.
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/cmcc-sps4",
         variable="precip",
         init="2025-11",
@@ -753,7 +753,7 @@ def test_fetch_cmcc_sps4_precip_realtime_forecast():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_cmcc_sps4_daily_precip_and_sst():
-    p = rosetta.fetch(
+    p = acmaddl.fetch(
         product="c3s/cmcc-sps4-daily",
         variable="precip",
         init="2003-11",
@@ -766,7 +766,7 @@ def test_fetch_cmcc_sps4_daily_precip_and_sst():
     assert p["precip"].attrs["units"] == "mm/day"
     assert "member" in p.dims
 
-    s = rosetta.fetch(
+    s = acmaddl.fetch(
         product="c3s/cmcc-sps4-daily",
         variable="sst",
         init="2003-11",
@@ -783,7 +783,7 @@ def test_fetch_cmcc_sps4_daily_precip_and_sst():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_dwd_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/dwd",
         variable="temp",
         init="2000-01",
@@ -801,7 +801,7 @@ def test_fetch_dwd_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_ukmo_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/ukmo",
         variable="temp",
         init="2000-01",
@@ -819,7 +819,7 @@ def test_fetch_ukmo_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_jma_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="c3s/jma",
         variable="temp",
         init="2000-01",
@@ -838,7 +838,7 @@ def test_fetch_jma_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_era5_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/era5",
         variable="temp",
         init="2024-01",
@@ -855,7 +855,7 @@ def test_fetch_era5_temp():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_era5_land_monthly_precip():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/era5-land-monthly",
         variable="precip",
         init="2024-01",
@@ -873,7 +873,7 @@ def test_fetch_era5_land_monthly_precip():
 @pytest.mark.network
 @pytest.mark.cds
 def test_fetch_era5_land_monthly_temp():
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="obs/era5-land-monthly",
         variable="temp",
         init="2024-01",
@@ -884,7 +884,7 @@ def test_fetch_era5_land_monthly_temp():
     assert ds["temp"].attrs["units"] == "C"
 
 
-# ── Shapefile region input, per data-source system (rosetta-plan §5, #12) ────
+# ── Shapefile region input, per data-source system (acmaddl-plan §5, #12) ────
 # Each adapter slices the bbox differently — OPeNDAP/NCEI/CCSR by xarray dims,
 # CDS server-side via `area`, HTTP via COG windows, Sheerwater via bbox→global —
 # so every system gets a shapefile case to prove the bbox→adapter→polygon-clip
@@ -948,7 +948,7 @@ def test_fetch_shapefile_region_per_system(product, variable, kwargs):
     `geo` extra (geopandas) + the kenya.shp fixture."""
     pytest.importorskip("geopandas")
     shp = _kenya_shapefile()
-    ds = rosetta.fetch(product, variable, region=shp, verbose=True, **kwargs)
+    ds = acmaddl.fetch(product, variable, region=shp, verbose=True, **kwargs)
     _assert_masked_to_kenya(ds, variable)
 
 
@@ -967,8 +967,8 @@ def test_cache_keys_on_region_not_just_product():
 
     common = dict(product="nmme/cfsv2", variable="precip",
                   init="2010-02", target="MAM", hindcast=(2010, 2010))
-    k = rosetta.fetch(region=str(kenya), verbose=False, **common)["precip"]
-    n = rosetta.fetch(region=str(nigeria), verbose=False, **common)["precip"]
+    k = acmaddl.fetch(region=str(kenya), verbose=False, **common)["precip"]
+    n = acmaddl.fetch(region=str(nigeria), verbose=False, **common)["precip"]
 
     # Nigeria (West Africa, lon ~3–14) must not come back as Kenya (lon ~34–42).
     assert float(k.lon.min()) > 30, "Kenya extent unexpected"
@@ -985,7 +985,7 @@ def test_fetch_chirps_gefs_daily_single_issuance():
     """One real issuance from the live CHC server: 16 daily leads as a
     (init_time, lead_time, lat, lon) cube. Guards the catalog's URL templates
     against an upstream layout change."""
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="chc/chirps-gefs-daily", variable="precip",
         init="2026-07-05", region=REGION, verbose=True,
     )
@@ -1005,7 +1005,7 @@ def test_fetch_chirps_gefs_across_many_issuances():
     stacked on init_time. Uses the 15-day accumulation product (one raster per
     issuance) to keep the pull small."""
     inits = [f"{year}-06-30" for year in (2015, 2016, 2017)]
-    ds = rosetta.fetch(
+    ds = acmaddl.fetch(
         product="chc/chirps-gefs-15day", variable="precip",
         init=inits, region=REGION, verbose=True,
     )

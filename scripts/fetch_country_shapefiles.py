@@ -10,7 +10,7 @@ Usage:
     scripts/fetch_country_shapefiles.py                 # Kenya, Nigeria, Ethiopia
     scripts/fetch_country_shapefiles.py KEN NGA ETH TZA # custom ISO3 list
 
-Requires the `geo` extra: pip install 'rosetta[geo]'
+Requires the `geo` extra: pip install 'acmadDL[geo]'
 Source: https://www.geoboundaries.org/  (gbOpen, ADM0, simplified)
 """
 from __future__ import annotations

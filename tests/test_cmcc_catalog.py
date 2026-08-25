@@ -12,7 +12,7 @@ import warnings
 
 import pytest
 
-from rosetta import catalog
+from acmaddl import catalog
 
 MONTHLY = "c3s/cmcc-sps4"
 DAILY = "c3s/cmcc-sps4-daily"

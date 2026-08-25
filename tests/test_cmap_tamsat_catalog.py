@@ -4,7 +4,7 @@ and obs/tamsat (JASMIN HTTP). Added on the `acmad` branch.
 The ACMAD reproduction is IRIDL-independent: the CPC-merged-precip predictand is
 CMAP, served natively as NetCDF by NOAA PSL, in place of the IRIDL-only CAMS-OPI.
 """
-from rosetta import catalog
+from acmaddl import catalog
 
 
 def test_cmap_registered_as_psl_opendap():

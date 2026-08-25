@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from rosetta.normalize import _resolve_native_name
+from acmaddl.normalize import _resolve_native_name
 
 
 def _ds(**vars_):

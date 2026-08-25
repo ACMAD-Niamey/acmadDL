@@ -14,14 +14,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from rosetta.adapters._issuance import (
+from acmaddl.adapters._issuance import (
     enumerate_files,
     issuance_config,
     lead_timedelta,
     parse_init_dates,
 )
-from rosetta.adapters.http import HTTPAdapter
-from rosetta.catalog import _catalog
+from acmaddl.adapters.http import HTTPAdapter
+from acmaddl.catalog import _catalog
 
 BASE = "https://example.org/archive"
 
@@ -189,7 +189,7 @@ def stub_opens(monkeypatch):
         day = int(url.split(".")[-2])
         return _raster(day)
 
-    monkeypatch.setattr("rosetta.adapters.http._open_raster", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_raster", fake_open)
     return calls
 
 
@@ -236,7 +236,7 @@ def test_adapter_raises_on_a_missing_file_by_default(monkeypatch):
             raise RuntimeError("404")
         return _raster(1)
 
-    monkeypatch.setattr("rosetta.adapters.http._open_raster", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_raster", fake_open)
     with pytest.raises(RuntimeError, match="refusing to return partial data"):
         _fetch({"issuance": DAILY, "_init_dates": ["2026-07-05"]})
 
@@ -249,7 +249,7 @@ def test_allow_partial_keeps_the_lead_axis_aligned(monkeypatch):
             raise RuntimeError("404")
         return _raster(int(url.split(".")[-2]))
 
-    monkeypatch.setattr("rosetta.adapters.http._open_raster", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_raster", fake_open)
     got = _fetch({"issuance": DAILY, "_init_dates": ["2026-07-05"],
                   "_allow_partial": True})
     assert got.sizes["lead_time"] == 3
@@ -272,7 +272,7 @@ def test_plain_time_series_products_are_untouched_by_the_issuance_branch(monkeyp
         opened.append(url)
         return _raster(1).expand_dims(time=[np.datetime64("2020-01-01")])
 
-    monkeypatch.setattr("rosetta.adapters.http._open_cog_subset", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_cog_subset", fake_open)
     got = _fetch({"file_pattern": "chirps.{year}.tif"}, date_range=(2020, 2020))
     assert opened == [f"{BASE}/chirps.2020.tif"]
     assert "time" in got.dims
@@ -282,7 +282,7 @@ def test_plain_time_series_products_are_untouched_by_the_issuance_branch(monkeyp
 
 
 def _fake_env(monkeypatch, raw, config):
-    fetch_mod = importlib.import_module("rosetta.fetch")
+    fetch_mod = importlib.import_module("acmaddl.fetch")
     seen = {}
 
     class FakeAdapter:
@@ -438,7 +438,7 @@ def test_month_pruning_downloads_only_the_requested_months(monkeypatch):
         opened.append(url)
         return _raster(1).expand_dims(time=[np.datetime64("2020-01-01")])
 
-    monkeypatch.setattr("rosetta.adapters.http._open_cog_subset", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_cog_subset", fake_open)
     _fetch({"file_pattern": "p.{year}.{month:02d}.tif", "init_months": [6, 7, 8, 9]},
            date_range=(2001, 2002))
     assert len(opened) == 8
@@ -452,7 +452,7 @@ def test_without_month_pruning_every_month_is_downloaded(monkeypatch):
         opened.append(url)
         return _raster(1).expand_dims(time=[np.datetime64("2020-01-01")])
 
-    monkeypatch.setattr("rosetta.adapters.http._open_cog_subset", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_cog_subset", fake_open)
     _fetch({"file_pattern": "p.{year}.{month:02d}.tif"}, date_range=(2001, 2002))
     assert len(opened) == 24
 
@@ -464,7 +464,7 @@ def test_month_pruning_does_not_touch_year_only_patterns(monkeypatch):
         opened.append(url)
         return _raster(1).expand_dims(time=[np.datetime64("2020-01-01")])
 
-    monkeypatch.setattr("rosetta.adapters.http._open_cog_subset", fake_open)
+    monkeypatch.setattr("acmaddl.adapters.http._open_cog_subset", fake_open)
     _fetch({"file_pattern": "p.{year}.tif", "init_months": [6]}, date_range=(2001, 2002))
     assert len(opened) == 2
 
@@ -515,8 +515,8 @@ def test_fetch_months_keys_the_cache_without_a_new_cache_argument():
     on disk is invalidated, and two different month sets do not collide."""
     import inspect
 
-    # `from rosetta import fetch` gives the function; the module is one level in.
-    fetch_mod = importlib.import_module("rosetta.fetch")
+    # `from acmaddl import fetch` gives the function; the module is one level in.
+    fetch_mod = importlib.import_module("acmaddl.fetch")
 
     args = inspect.signature(fetch_mod._fetch_raw_cached).parameters
     assert "init_months" in args

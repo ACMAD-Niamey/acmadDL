@@ -1,0 +1,22 @@
+# Package-local nuthatch config, shipped inside the installed acmaddl package.
+#
+# nuthatch resolves its configuration by walking *up* the filesystem from the
+# calling module and using the first pyproject.toml / nuthatch.toml it finds
+# (see nuthatch.config._find_nuthatch_config). By shipping this file next to
+# acmaddl's modules, that search stops HERE instead of continuing up into
+# site-packages/, where a co-installed package (e.g. sheerwater) may drop a
+# nuthatch.toml that points the cache root at a private GCS bucket and breaks
+# fetch() for users without those credentials.
+#
+# An installed package's config is demoted by nuthatch to a "mirror" and cannot
+# set the real root, so the actual root/local filesystem is pinned via the
+# NUTHATCH_* env vars in acmaddl/__init__.py. This file's job is purely to
+# shadow ambient configs so no inaccessible remote mirror is ever discovered.
+#
+# file:// prefix: required so fsspec resolves the local `file` backend rather
+# than mis-parsing the '://' that adapter source URLs embed in cache-key paths.
+[tool.nuthatch]
+filesystem = "file://~/.nuthatch/caches"
+
+[tool.nuthatch.local]
+filesystem = "file://~/.nuthatch/caches"

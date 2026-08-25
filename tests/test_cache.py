@@ -1,11 +1,11 @@
 def _read_fetch_src():
     from pathlib import Path
-    return (Path(__file__).parent.parent / "src/rosetta/fetch.py").read_text()
+    return (Path(__file__).parent.parent / "src/acmaddl/fetch.py").read_text()
 
 
 def test_fetch_has_no_local_cache_dir():
     src = _read_fetch_src()
-    assert ".cache/rosetta" not in src, "Old cache directory still referenced in fetch.py"
+    assert ".cache/acmaddl" not in src, "Old cache directory still referenced in fetch.py"
     assert "_CACHE_DIR" not in src, "_CACHE_DIR (old cache) still in fetch.py"
     assert "set_cache" not in src, "set_cache() (old cache toggle) still in fetch.py"
 
@@ -22,11 +22,11 @@ def test_fetch_raw_is_nuthatch_cached():
 def test_adapters_do_not_have_nuthatch_cache():
     """Adapters should NOT have their own @cache — caching is in fetch._fetch_raw."""
     import inspect
-    from rosetta.adapters.cds import CDSAdapter
-    from rosetta.adapters.http import HTTPAdapter
-    from rosetta.adapters.opendap import OPeNDAPAdapter
-    from rosetta.adapters.s3 import S3Adapter
-    from rosetta.adapters.ncei import NCEIAdapter
+    from acmaddl.adapters.cds import CDSAdapter
+    from acmaddl.adapters.http import HTTPAdapter
+    from acmaddl.adapters.opendap import OPeNDAPAdapter
+    from acmaddl.adapters.s3 import S3Adapter
+    from acmaddl.adapters.ncei import NCEIAdapter
 
     for AdapterClass in [CDSAdapter, HTTPAdapter, OPeNDAPAdapter, S3Adapter, NCEIAdapter]:
         src = inspect.getsource(AdapterClass)
@@ -45,7 +45,7 @@ def test_nuthatch_config_in_pyproject():
 
 def test_cli_cache_list_invokable():
     from click.testing import CliRunner
-    from rosetta.cli import cli
+    from acmaddl.cli import cli
     runner = CliRunner()
     result = runner.invoke(cli, ["cache", "list"])
     assert result.exit_code in (0, 1), \
@@ -64,13 +64,13 @@ def test_fetch_cache_false_bypasses_nuthatch():
     )
     fake_ds["precip"].attrs["units"] = "mm/day"
 
-    with patch("rosetta.fetch._fetch_raw_cached") as mock_cached, \
-         patch("rosetta.fetch.get_adapter") as mock_get_adapter:
+    with patch("acmaddl.fetch._fetch_raw_cached") as mock_cached, \
+         patch("acmaddl.fetch.get_adapter") as mock_get_adapter:
         mock_adapter = MagicMock()
         mock_adapter.fetch_data.return_value = fake_ds
         mock_get_adapter.return_value = mock_adapter
 
-        from rosetta.fetch import fetch
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=False)
 
         mock_cached.assert_not_called()
@@ -89,8 +89,8 @@ def test_fetch_cache_true_uses_nuthatch():
     )
     fake_ds["precip"].attrs["units"] = "mm/day"
 
-    with patch("rosetta.fetch._fetch_raw_cached", return_value=fake_ds) as mock_cached:
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", return_value=fake_ds) as mock_cached:
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True)
         mock_cached.assert_called_once()
 
@@ -138,8 +138,8 @@ def test_different_products_call_adapter_separately():
             return chirps_ds
         return era5_ds
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached):
+        from acmaddl.fetch import fetch
         result_chirps = fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True)
         result_era5 = fetch("obs/era5", variable="temp", cache=True)
 
@@ -169,8 +169,8 @@ def test_different_regions_call_adapter_separately():
         ds["precip"].attrs["units"] = "mm/day"
         return ds
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached):
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True, region=[-2, 2, 30, 35])
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True, region=[-10, 10, 20, 50])
 
@@ -196,8 +196,8 @@ def test_different_date_ranges_call_adapter_separately():
         ds["precip"].attrs["units"] = "mm/day"
         return ds
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached):
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True, hindcast=(2010, 2015))
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True, hindcast=(2016, 2020))
 
@@ -234,9 +234,9 @@ def test_cache_false_never_uses_cached_result():
     mock_adapter = MagicMock()
     mock_adapter.fetch_data.side_effect = fake_adapter_fetch
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached), \
-         patch("rosetta.fetch.get_adapter", return_value=mock_adapter):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached), \
+         patch("acmaddl.fetch.get_adapter", return_value=mock_adapter):
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=False)
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=False)
 
@@ -278,8 +278,8 @@ def test_fetch_uses_cache_on_second_call(tmp_path, monkeypatch):
     adapter = MagicMock()
     adapter.fetch_data.return_value = ds
 
-    with patch("rosetta.fetch.get_adapter", return_value=adapter):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch.get_adapter", return_value=adapter):
+        from acmaddl.fetch import fetch
         first = fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True, verbose=False)
         assert adapter.fetch_data.call_count == 1, \
             "First fetch must call the adapter"
@@ -304,30 +304,30 @@ def test_cli_is_registered_in_pyproject():
     with open(Path(__file__).parent.parent / "pyproject.toml", "rb") as f:
         config = tomllib.load(f)
     scripts = config.get("project", {}).get("scripts", {})
-    assert "rosetta" in scripts, \
-        "Missing 'rosetta' entry in [project.scripts] in pyproject.toml"
+    assert "acmaddl" in scripts, \
+        "Missing 'acmaddl' entry in [project.scripts] in pyproject.toml"
 
 
 # --- Regression tests for the nuthatch cache-root hijack -----------------------
-# When accord-rosetta and sheerwater are both installed, nuthatch's upward config
-# search leaves site-packages/rosetta/ and adopts sheerwater's site-packages/
+# When acmadDL and sheerwater are both installed, nuthatch's upward config
+# search leaves site-packages/acmaddl/ and adopts sheerwater's site-packages/
 # nuthatch.toml, which pins the cache root at gs://sheerwater-datalake/caches.
 # Any user without those GCS credentials then fails on their first fetch() with a
-# 401 / interactive prompt / fsspec "Protocol not known" crash. rosetta defends by
+# 401 / interactive prompt / fsspec "Protocol not known" crash. acmaddl defends by
 # (1) shipping a package-local nuthatch.toml that shadows the ambient one, and
 # (2) pinning the root/local cache to a local file:// path via NUTHATCH_* env vars
 # at import. These tests guard both halves.
 
 def test_shadow_nuthatch_toml_shipped_and_wheel_included():
     """A package-local nuthatch.toml must ship so it shadows any ambient config
-    (e.g. sheerwater's) that would otherwise hijack rosetta's cache root."""
+    (e.g. sheerwater's) that would otherwise hijack acmaddl's cache root."""
     import tomllib
     from pathlib import Path
 
     root = Path(__file__).parent.parent
-    shadow = root / "src/rosetta/nuthatch.toml"
+    shadow = root / "src/acmaddl/nuthatch.toml"
     assert shadow.exists(), \
-        "src/rosetta/nuthatch.toml must exist to shadow ambient nuthatch configs"
+        "src/acmaddl/nuthatch.toml must exist to shadow ambient nuthatch configs"
 
     with open(shadow, "rb") as f:
         cfg = tomllib.load(f)
@@ -341,16 +341,16 @@ def test_shadow_nuthatch_toml_shipped_and_wheel_included():
     wheel = pp["tool"]["hatch"]["build"]["targets"]["wheel"]
     force = wheel.get("force-include", {})
     assert any("nuthatch.toml" in v for v in force.values()), \
-        "pyproject must force-include src/rosetta/nuthatch.toml in the wheel"
+        "pyproject must force-include src/acmaddl/nuthatch.toml in the wheel"
 
 
 def test_init_pins_nuthatch_cache_env():
-    """rosetta/__init__.py must pin the nuthatch root/local cache to a local
+    """acmaddl/__init__.py must pin the nuthatch root/local cache to a local
     file:// filesystem at import. An installed package's own config is demoted to
     a mirror and cannot set the root, so the NUTHATCH_* env vars are the only
     lever; the file:// prefix is required to dodge the fsspec '://' parse bug."""
     from pathlib import Path
-    src = (Path(__file__).parent.parent / "src/rosetta/__init__.py").read_text()
+    src = (Path(__file__).parent.parent / "src/acmaddl/__init__.py").read_text()
     assert "NUTHATCH_ROOT_FILESYSTEM" in src, \
         "__init__.py must pin NUTHATCH_ROOT_FILESYSTEM"
     assert "NUTHATCH_LOCAL_FILESYSTEM" in src, \
@@ -362,11 +362,11 @@ def test_init_pins_nuthatch_cache_env():
 
 
 def test_import_resolves_local_root_and_no_remote_mirror(tmp_path):
-    """Behavioral end-to-end guard: importing rosetta in an isolated environment
+    """Behavioral end-to-end guard: importing acmaddl in an isolated environment
     must resolve the nuthatch cache to a local file:// root with NO remote
     (gs://) cache anywhere — even though sheerwater's nuthatch.toml is present in
     site-packages. Run in a subprocess with a clean HOME/cwd and no NUTHATCH_*
-    env so the result reflects only rosetta's own defaults."""
+    env so the result reflects only acmaddl's own defaults."""
     import json
     import os
     import subprocess
@@ -374,9 +374,9 @@ def test_import_resolves_local_root_and_no_remote_mirror(tmp_path):
 
     script = (
         "import json\n"
-        "import rosetta\n"
+        "import acmaddl\n"
         "from nuthatch.config import NuthatchConfig\n"
-        "cfg = NuthatchConfig(rosetta).config\n"
+        "cfg = NuthatchConfig(acmaddl).config\n"
         "def walk(d):\n"
         "    out = []\n"
         "    if isinstance(d, dict):\n"
@@ -391,9 +391,9 @@ def test_import_resolves_local_root_and_no_remote_mirror(tmp_path):
     )
 
     # Isolate from the developer's ~/.nuthatch.toml (HOME), the repo's own
-    # pyproject (cwd), and any inherited NUTHATCH_* / ROSETTA_CACHE_DIR.
+    # pyproject (cwd), and any inherited NUTHATCH_* / ACMADDL_CACHE_DIR.
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith("NUTHATCH") and k != "ROSETTA_CACHE_DIR"}
+           if not k.startswith("NUTHATCH") and k != "ACMADDL_CACHE_DIR"}
     env["HOME"] = str(tmp_path)
 
     result = subprocess.run(
@@ -446,8 +446,8 @@ def test_different_target_seasons_call_adapter_separately():
         ds["precip"].attrs["units"] = "mm/day"
         return ds
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached):
+        from acmaddl.fetch import fetch
         common = dict(variable="precip", cache=True, init="2020-08",
                       region=[-2, 2, 30, 35], hindcast=(1991, 2020))
         fetch("nmme/cansipsic4", target="OND", **common)
@@ -479,8 +479,8 @@ def test_no_target_leaves_cache_key_unchanged():
         ds["precip"].attrs["units"] = "mm/day"
         return ds
 
-    with patch("rosetta.fetch._fetch_raw_cached", side_effect=fake_cached):
-        from rosetta.fetch import fetch
+    with patch("acmaddl.fetch._fetch_raw_cached", side_effect=fake_cached):
+        from acmaddl.fetch import fetch
         fetch("obs/chirps-v3-daily-rhiza", variable="precip", cache=True)
 
     assert seen == [None], f"obs fetch should pass target_months=None, got {seen}"

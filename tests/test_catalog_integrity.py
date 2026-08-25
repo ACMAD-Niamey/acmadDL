@@ -12,8 +12,8 @@ import datetime
 
 import pytest
 
-from rosetta.adapters import _ADAPTERS
-from rosetta.catalog import _catalog
+from acmaddl.adapters import _ADAPTERS
+from acmaddl.catalog import _catalog
 
 CUR_YEAR = datetime.date.today().year
 REAL = {k: v for k, v in _catalog.items() if isinstance(v, dict) and "alias_of" not in v}
@@ -150,7 +150,7 @@ def test_cfsv2_split_year_fetched_from_both_streams():
     OVERLAP at 2011 (the split year) so a boundary-spanning fetch requests 2011
     from BOTH segments; each stream's own init-time (S) filter then contributes
     only the inits it actually has, and the adapter unions them via concat."""
-    from rosetta.adapters.base import AdapterBase
+    from acmaddl.adapters.base import AdapterBase
 
     class _D(AdapterBase):
         def fetch_data(self, *a, **k):
@@ -167,7 +167,7 @@ def test_non_overlapping_product_routing_is_unchanged():
     overlap (forecast_range[0] > hindcast_range[1]) must split cleanly at the
     boundary with no overlap year -- today's (pre-A5) behavior for every product
     other than cfsv2."""
-    from rosetta.adapters.base import AdapterBase
+    from acmaddl.adapters.base import AdapterBase
 
     class _D(AdapterBase):
         def fetch_data(self, *a, **k):
@@ -209,7 +209,7 @@ def test_issuance_blocks_are_well_formed():
     """An `issuance` block declares how to locate one file per (init, lead).
     A typo in its patterns or lead range is a 404 at fetch time, so validate the
     block structurally here rather than discovering it against a live server."""
-    from rosetta.adapters._issuance import issuance_config
+    from acmaddl.adapters._issuance import issuance_config
 
     bad = []
     for k, v in REAL.items():

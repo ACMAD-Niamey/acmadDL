@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from rosetta.adapters._robust import reject_if_degenerate, DegenerateResponseError
+from acmaddl.adapters._robust import reject_if_degenerate, DegenerateResponseError
 
 
 def _ds(values, var="precip"):
@@ -61,7 +61,7 @@ def test_degenerate_error_is_a_runtimeerror():
 
 def test_fetch_raw_rejects_before_caching(monkeypatch):
     import importlib
-    F = importlib.import_module("rosetta.fetch")   # the module, not the shadowing fetch() function
+    F = importlib.import_module("acmaddl.fetch")   # the module, not the shadowing fetch() function
 
     class _ConstAdapter:
         def fetch_data(self, config, variable, *, date_range, region):
@@ -80,7 +80,7 @@ def test_fetch_raw_rejects_before_caching(monkeypatch):
 
 def test_fetch_raw_accepts_good_data(monkeypatch):
     import importlib
-    F = importlib.import_module("rosetta.fetch")   # the module, not the shadowing fetch() function
+    F = importlib.import_module("acmaddl.fetch")   # the module, not the shadowing fetch() function
     rng = np.random.default_rng(1)
 
     class _GoodAdapter:

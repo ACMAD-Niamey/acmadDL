@@ -1,4 +1,4 @@
-"""§3.2 Sheerwater-backed catalog entries (rosetta #7) + ERA5 enrichment.
+"""§3.2 Sheerwater-backed catalog entries (acmaddl #7) + ERA5 enrichment.
 
 CHIRPS now uses an explicit obs/chirps-{version}-{cadence}[-rhiza] naming
 (see tests/test_chirps_catalog.py): native UCSB products on the http adapter,
@@ -13,7 +13,7 @@ import pytest
 import xarray as xr
 from unittest.mock import MagicMock, patch
 
-from rosetta import catalog
+from acmaddl import catalog
 
 
 def test_obs_chirps_v3_daily_rhiza_routes_to_sheerwater():
@@ -54,7 +54,7 @@ def test_obs_era5_enriched_with_precip():
 
 @pytest.mark.parametrize("prod", ["obs/chirps-v3-daily-rhiza", "obs/imerg", "obs/ghcn"])
 def test_new_entries_config_health_ok(prod):
-    from rosetta.adapters import get_adapter
+    from acmaddl.adapters import get_adapter
     e = catalog.info(prod)
     adapter = get_adapter(e["adapter"])
     result = adapter.health_check(e, probe_remote=False)
@@ -73,10 +73,10 @@ def _raw_monthly(variable="precip"):
 
 def test_fetch_obs_chirps_v3_daily_rhiza_through_sheerwater():
     """End-to-end (mocked sheerwater fn): catalog -> adapter -> normalize."""
-    import rosetta
+    import acmaddl
     with patch("sheerwater.data.chirps_v3",
                MagicMock(return_value=_raw_monthly("precip")), create=True):
-        ds = rosetta.fetch("obs/chirps-v3-daily-rhiza", "precip",
+        ds = acmaddl.fetch("obs/chirps-v3-daily-rhiza", "precip",
                            hindcast=(2010, 2010), region=[-2, 2, 30, 34],
                            cache=False, verbose=False)
     assert ds is not None
