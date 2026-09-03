@@ -99,3 +99,62 @@ def test_sanitize_preserves_forecast_dims(tmp_path):
     p = tmp_path / "fc.nc"
     clean.to_netcdf(p)
     assert np.allclose(xr.open_dataset(p)["precip"].values, fc["precip"].values)
+
+
+# ── lon_selection_bounds: the seam split, exposed for request planning ──────
+# select_lon answers "which cells?" by concatenating two lazy slices when a box
+# crosses the data's longitude seam. That is fine in memory but wrong over
+# OPeNDAP: a lazily seam-concatenated selection is one malformed DAP request,
+# which NOAA PSL answers with a zero-filled array (probe-verified 2026-09-02 —
+# it truncates at every size, while the same cell count loads fine contiguous).
+# Exposing the BOUNDS lets the OPeNDAP adapter issue one contiguous request per
+# segment while the convention logic stays in exactly one place.
+
+from acmaddl.normalize import lon_selection_bounds  # noqa: E402
+
+
+def test_a_contiguous_box_needs_one_segment():
+    lons = np.arange(0, 360, 2.0)
+    assert lon_selection_bounds(lons, 30, 60) == [(30, 60)]
+
+
+def test_a_seam_crossing_box_needs_two_ascending_segments():
+    """-30..60 against 0..360 data is 330..360 plus 0..60 — two requests."""
+    lons = np.arange(0, 360, 2.0)
+    bounds = lon_selection_bounds(lons, -30, 60)
+    assert len(bounds) == 2, bounds
+    for start, stop in bounds:
+        assert start <= stop, f"segment {start}..{stop} is not ascending"
+    assert bounds[0][0] == 330 and bounds[1][1] == 60
+
+
+def test_bounds_are_translated_into_the_data_convention():
+    """A 0..360 request against -180..180 data comes back translated."""
+    lons = np.arange(-180, 180, 2.0)
+    assert lon_selection_bounds(lons, 200, 300) == [(-160, -60)]
+
+
+def test_a_full_globe_request_is_a_single_all_inclusive_segment():
+    lons = np.arange(0, 360, 2.0)
+    bounds = lon_selection_bounds(lons, -180, 180)
+    assert len(bounds) == 1
+    start, stop = bounds[0]
+    assert start <= float(lons.min()) and stop >= float(lons.max())
+
+
+def test_select_lon_still_agrees_with_the_bounds_it_now_uses():
+    """The refactor must not change which cells select_lon returns."""
+    lons = np.arange(0, 360, 2.0)
+    ds = _ds(lons)
+    out = select_lon(ds, -30, 60)
+    expected = np.concatenate([lons[lons >= 330], lons[lons <= 60]])
+    np.testing.assert_array_equal(out.lon.values, expected)
+
+
+def test_an_empty_selection_warns_and_names_the_source_convention():
+    """The refactor must keep this diagnostic path working: an S2S reforecast
+    request can legitimately select no cells, and it warns rather than raising."""
+    ds = _ds(np.arange(0, 40, 2.0))          # source spans 0..38 only
+    with pytest.warns(UserWarning, match=r"0\.\.360|-180\.\.180"):
+        out = select_lon(ds, 100, 120)
+    assert out.sizes["lon"] == 0

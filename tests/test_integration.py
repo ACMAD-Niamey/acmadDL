@@ -1015,3 +1015,115 @@ def test_fetch_chirps_gefs_across_many_issuances():
     assert ds["precip"].attrs["units"] == "mm"
     years = [str(v)[:4] for v in ds.init_time.values]
     assert years == ["2015", "2016", "2017"]
+
+
+# ── GPCC (DWD) / GPCP (NCEI) / OISST (NOAA PSL) / ERA5-Land pev ─────────────
+# A Sahel box that CROSSES THE PRIME MERIDIAN on purpose: it is what caught the
+# http adapter's convention-blind longitude crop against GPCP's 0..360 grid.
+SAHEL = [8, 18, -8, 8]
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_fetch_gpcc_monitoring_precip():
+    ds = acmaddl.fetch("obs/gpcc-monitoring-v2020", "precip",
+                       hindcast=(2020, 2020), months=[7, 8, 9],
+                       region=SAHEL, verbose=True)
+    _check_dataset(ds, "precip", SAHEL)
+    assert ds["precip"].attrs["units"] == "mm/month"
+    # time_from_pattern: three requested months, three distinct stamps, in order
+    assert [str(t)[:7] for t in ds.time.values] == ["2020-07", "2020-08", "2020-09"]
+    mean = float(ds["precip"].mean())
+    assert 20 < mean < 600, f"implausible Sahel JAS monthly total: {mean}"
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_fetch_gpcc_first_guess_precip():
+    """The near-real-time stream. 2013 is its first NetCDF year."""
+    ds = acmaddl.fetch("obs/gpcc-first-guess", "precip",
+                       hindcast=(2013, 2013), months=[8],
+                       region=SAHEL, verbose=True)
+    _check_dataset(ds, "precip", SAHEL)
+    assert ds["precip"].attrs["units"] == "mm/month"
+    assert str(ds.time.values[0])[:7] == "2013-08"
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_fetch_gpcp_resolves_the_processing_date_suffix():
+    ds = acmaddl.fetch("obs/gpcp-v2-3", "precip", hindcast=(2020, 2020),
+                       months=[8], region=SAHEL, verbose=True)
+    _check_dataset(ds, "precip", SAHEL)
+    assert ds["precip"].attrs["units"] == "mm/day"
+    mean = float(ds["precip"].mean())
+    assert 0.5 < mean < 20, f"implausible Sahel August rate: {mean}"
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_gpcp_keeps_both_sides_of_a_prime_meridian_bbox():
+    """GPCP is served on a 0..360 grid; obs/cmap (same convention, different
+    adapter) is the reference for what the crop must return."""
+    kw = dict(hindcast=(2020, 2020), months=[8], region=SAHEL, verbose=False)
+    gpcp = acmaddl.fetch("obs/gpcp-v2-3", "precip", **kw)
+    cmap = acmaddl.fetch("obs/cmap", "precip", **kw)
+    assert list(gpcp.lon.values) == list(cmap.lon.values), (
+        f"gpcp {gpcp.lon.values} != cmap {cmap.lon.values}")
+    assert (gpcp.lon.values > 350).any() and (gpcp.lon.values < 10).any()
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_fetch_oisst_highres_sst_across_chunks():
+    """Four years at max_request_years=2 exercises the chunk loop; the
+    always-on obs guard would raise on a zero-filled chunk."""
+    ocean = [-5, 15, -30, -10]   # tropical Atlantic, no land-mask trap
+    ds = acmaddl.fetch("obs/oisst-v2-highres", "sst", hindcast=(2017, 2020),
+                       region=ocean, verbose=True)
+    _check_dataset(ds, "sst", ocean)
+    assert ds["sst"].attrs["units"] == "C"
+    assert ds.sizes["time"] == 48, ds.sizes
+    mean = float(ds["sst"].mean())
+    assert 20 < mean < 32, f"implausible tropical Atlantic SST: {mean}"
+
+
+@pytest.mark.integration
+@pytest.mark.network
+@pytest.mark.cds
+def test_fetch_era5_land_pev_is_a_positive_rate():
+    """ERA5 serves pev as a NEGATIVE upward flux; the catalog flips it."""
+    ds = acmaddl.fetch("obs/era5-land-monthly", "pev", hindcast=(2020, 2020),
+                       months=[7], region=SAHEL, verbose=True)
+    _check_dataset(ds, "pev", SAHEL)
+    assert ds["pev"].attrs["units"] == "mm/day"
+    import numpy as np
+    assert float(np.nanmin(ds["pev"].values)) > 0, "pev must be positive demand"
+    mean = float(np.nanmean(ds["pev"].values))
+    assert 2 < mean < 20, f"implausible Sahel July PET: {mean}"
+
+
+@pytest.mark.integration
+@pytest.mark.network
+def test_fetch_oisst_across_the_longitude_seam():
+    """The regression that hid behind a contiguous test region.
+
+    Every other OISST test here uses a box west of the prime meridian
+    ([-30, -10] -> 330..350, contiguous), so none of them exercised a
+    seam-crossing selection. Lazily concatenated, that is a single malformed DAP
+    request which NOAA PSL answers with zeros at ANY size — an 80x90 deg box
+    truncated even at 230k values. The adapter must issue one contiguous request
+    per segment instead.
+    """
+    import numpy as np
+    africa = [-40, 40, -30, 60]     # spans the seam, ~115k cells per month
+    ds = acmaddl.fetch("obs/oisst-v2-highres", "sst", hindcast=(2019, 2019),
+                       region=africa, verbose=True)
+    _check_dataset(ds, "sst")
+    lons = ds.lon.values
+    assert (lons > 330).any() and (lons < 60).any(), f"seam not covered: {lons}"
+    sst = ds["sst"].values
+    # Truncation is a zero-filled response: real SST varies within every month.
+    per_month = [float(np.nanstd(sst[i])) for i in range(sst.shape[0])]
+    assert min(per_month) > 1.0, f"a month came back near-constant: {per_month}"
+    assert 15 < float(np.nanmean(sst)) < 30, float(np.nanmean(sst))

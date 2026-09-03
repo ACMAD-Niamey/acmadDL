@@ -1,3 +1,5 @@
+import fnmatch
+import gzip
 import os
 import re
 import tempfile
@@ -9,6 +11,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from .base import AdapterBase
+from ..normalize import select_lon
 from ._issuance import enumerate_files, issuance_config, lead_timedelta
 from ._robust import (
     _DEFAULT_MAX_RETRIES,
@@ -34,10 +37,17 @@ def _enumerate_timeseries(file_pattern, date_range, product_config):
     unambiguously read back from the name — and ``None`` for monthly/yearly
     files, whose timestamp the opener infers from the filename as before.
 
+    A product declaring ``time_from_pattern`` gets an explicit timestamp for the
+    monthly and yearly cadences too, because for those the enumeration replaces
+    the file's own time axis rather than merely labelling a raster (see
+    ``_stamp_time``).
+
     Month pruning via ``init_months`` applies to every sub-monthly cadence, so a
     JJAS analysis fetches four months of dekads, not twelve.
     """
     import pandas as pd
+
+    from_pattern = bool(product_config.get("time_from_pattern"))
 
     if not date_range:
         # No range: one recent file, accounting for observational lag.
@@ -49,8 +59,10 @@ def _enumerate_timeseries(file_pattern, date_range, product_config):
             return [(file_pattern.format(year=recent.year, month=recent.month, pentad=1),
                      pd.Timestamp(recent.year, recent.month, 1))]
         if "{month" in file_pattern:
-            return [(file_pattern.format(year=recent.year, month=recent.month), None)]
-        return [(file_pattern.format(year=recent.year), None)]
+            return [(file_pattern.format(year=recent.year, month=recent.month),
+                     pd.Timestamp(recent.year, recent.month, 1) if from_pattern else None)]
+        return [(file_pattern.format(year=recent.year),
+                 pd.Timestamp(recent.year, 1, 1) if from_pattern else None)]
 
     y0, y1 = date_range
     months = product_config.get("init_months") or range(1, 13)
@@ -64,9 +76,60 @@ def _enumerate_timeseries(file_pattern, date_range, product_config):
                  pd.Timestamp(y, m, _PENTAD_DAYS[p - 1]))
                 for y in range(y0, y1 + 1) for m in months for p in range(1, 7)]
     if "{month" in file_pattern:
-        return [(file_pattern.format(year=y, month=m), None)
+        return [(file_pattern.format(year=y, month=m),
+                 pd.Timestamp(y, m, 1) if from_pattern else None)
                 for y in range(y0, y1 + 1) for m in months]
-    return [(file_pattern.format(year=y), None) for y in range(y0, y1 + 1)]
+    return [(file_pattern.format(year=y),
+             pd.Timestamp(y, 1, 1) if from_pattern else None)
+            for y in range(y0, y1 + 1)]
+
+
+def _list_directory(url):
+    """Filenames linked from an HTTP directory listing (Apache/nginx style)."""
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        html = resp.read().decode(errors="replace")
+    return [os.path.basename(h) for h in re.findall(r'href="([^"]+)"', html)]
+
+
+def _resolve_wildcards(base, entries, list_dir=None):
+    """Resolve a ``*`` in each enumerated relative path against the server.
+
+    NCEI stamps its GPCP filenames with the processing date
+    (``…_d202403_c20240607.nc``), which no static pattern can predict, so the
+    catalog writes the predictable part and a ``*`` for the rest. Each directory
+    is listed at most once per fetch — a 45-year pull costs 45 listings, not 540.
+
+    Several matches means the month was reprocessed; the lexically greatest name
+    wins, which for a fixed-width ``_c<YYYYMMDD>`` suffix is the most recent
+    reprocessing. No match raises rather than skipping the month: a silently
+    dropped file is indistinguishable downstream from data the source never
+    published.
+
+    The match is a plain fnmatch against the pattern, so a sibling stream in the
+    same directory is excluded by the literal part of the name — NCEI keeps
+    ``gpcp_v02r03-preliminary_monthly_…`` alongside the final
+    ``gpcp_v02r03_monthly_…``, and only the latter matches the final product's
+    pattern.
+    """
+    list_dir = _list_directory if list_dir is None else list_dir
+    listings = {}
+    resolved = []
+    for rel, stamp in entries:
+        if "*" not in rel:
+            resolved.append((rel, stamp))
+            continue
+        dirpart, _, namepat = rel.rpartition("/")
+        dir_url = f"{base.rstrip('/')}/{dirpart}/" if dirpart else f"{base.rstrip('/')}/"
+        if dir_url not in listings:
+            listings[dir_url] = list_dir(dir_url)
+        hits = sorted(n for n in listings[dir_url] if fnmatch.fnmatch(n, namepat))
+        if not hits:
+            raise FileNotFoundError(
+                f"no file matching {namepat!r} in {dir_url} "
+                f"({len(listings[dir_url])} name(s) listed)"
+            )
+        resolved.append((f"{dirpart}/{hits[-1]}" if dirpart else hits[-1], stamp))
+    return resolved
 
 
 def _resolve_max_workers(product_config, n_urls):
@@ -94,7 +157,16 @@ def _iter(items, desc, enabled=True):
 
 
 def _subset_region(ds, region):
-    """Subset a dataset to a region [lat_s, lat_n, lon_w, lon_e] immediately after loading."""
+    """Subset a dataset to a region [lat_s, lat_n, lon_w, lon_e] immediately after loading.
+
+    Longitude goes through ``normalize.select_lon`` rather than a plain slice,
+    because the crop happens here — before normalize sees the data — and the
+    source's longitude convention is only knowable once a file is open. A bbox
+    written in -180..180 against a 0..360 grid (obs/gpcp-v2-3) would otherwise
+    lose everything west of the prime meridian, and normalize cannot recover
+    cells that were already dropped. This is the same helper, for the same
+    reason, that the OPeNDAP adapter uses on its pre-normalize crop.
+    """
     if region is None:
         return ds
     lat_s, lat_n, lon_w, lon_e = region
@@ -103,10 +175,8 @@ def _subset_region(ds, region):
     lon_dim = "longitude" if "longitude" in ds.dims else "lon" if "lon" in ds.dims else None
     if lat_dim and lon_dim:
         ds = ds.sortby(lat_dim)
-        ds = ds.sel({
-            lat_dim: slice(lat_s - buf, lat_n + buf),
-            lon_dim: slice(lon_w - buf, lon_e + buf),
-        })
+        ds = ds.sel({lat_dim: slice(lat_s - buf, lat_n + buf)})
+        ds = select_lon(ds, lon_w - buf, lon_e + buf, lon_name=lon_dim)
     return ds.load()
 
 
@@ -154,6 +224,52 @@ def _open_raster(url, region, variable=None, fill_value=None):
     if "band" in ds.dims and ds.sizes["band"] == 1:
         ds = ds.squeeze("band", drop=True)
     return ds
+
+
+def _retrieve(url, dest):
+    """Download ``url`` to ``dest``, transparently gunzipping a gzipped payload.
+
+    DWD serves the GPCC products as ``.nc.gz``. netCDF4 reads a file's internal
+    zlib chunk compression but not a gzip *wrapper*, so the payload is expanded
+    in place before the opener ever sees it. Keyed off the URL suffix rather
+    than a catalog knob: a ``.gz`` URL is unambiguous, and a product whose
+    files are gzipped upstream has no reason to declare it twice.
+    """
+    urllib.request.urlretrieve(url, dest)
+    if url.endswith(".gz"):
+        with gzip.open(dest, "rb") as fh:
+            payload = fh.read()
+        with open(dest, "wb") as fh:
+            fh.write(payload)
+
+
+def _stamp_time(ds, stamp, url):
+    """Replace a file's time axis with the timestamp its filename implies.
+
+    Opt-in per product via ``time_from_pattern``, for sources whose in-file time
+    encoding is either undecodable or not self-contained. Both DWD GPCC streams
+    are: monitoring_v2020 writes ``20240301.0`` with units ``day as %Y%m%d.%f``
+    (a GrADS convention, not a CF ``<unit> since <epoch>``, so nothing decodes
+    it), and first_guess writes ``0`` with units ``months since 2024-3-1``
+    (unpadded, so decoding raises — and since every file says ``0`` against its
+    own reference month, a concat keeps the first file's units and collapses the
+    whole record onto one date).
+
+    The enumeration that built the URL is the only thing that knows what a
+    single-slice file holds, so it — not the file — is the authority here. This
+    is the same principle the issuance path already follows. A multi-slice file
+    has no single answer, so it raises rather than mislabel silently.
+    """
+    when = [_ns_stamp(stamp)]
+    if "time" not in ds.dims:
+        return ds.expand_dims(time=when)
+    if ds.sizes["time"] != 1:
+        raise ValueError(
+            f"time_from_pattern expects one time step per file, but {url} holds "
+            f"{ds.sizes['time']}; a filename can only name a single step. Drop "
+            f"time_from_pattern for this product and let its own axis decode."
+        )
+    return ds.assign_coords(time=when)
 
 
 def _ns_stamp(value):
@@ -274,6 +390,10 @@ class HTTPAdapter(AdapterBase):
         # (filename, timestamp) pairs. timestamp is explicit for sub-monthly
         # cadences (dekad/pentad), else None and inferred by the opener.
         entries = _enumerate_timeseries(file_pattern, date_range, product_config)
+        # A `*` in the pattern means the filename carries something unpredictable
+        # (NCEI's processing-date suffix), so ask the server what it actually has.
+        if "*" in file_pattern:
+            entries = _resolve_wildcards(base_url, entries)
         base = base_url.rstrip("/")
         urls = [f"{base}/{f}" for f, _ in entries]
         stamps = [ts for _, ts in entries]
@@ -309,9 +429,17 @@ class HTTPAdapter(AdapterBase):
                     failures.append((url, e))
                     print(f"Error fetching {url}: {e}")
         else:
+            # `time_from_pattern` products get their time axis from the
+            # enumeration, so the file's own axis is neither decoded nor trusted.
+            # Stamps are withheld otherwise: the dekad/pentad timestamps that
+            # _enumerate_timeseries always produces are for the raster path,
+            # where they label an image that carries no time coordinate at all.
+            from_pattern = bool(product_config.get("time_from_pattern"))
             datasets, failures = self._fetch_netcdf_parallel(
                 urls, region, progress, rate_limiter, max_retries, retry_backoff,
-                verbose, netcdf_workers)
+                verbose, netcdf_workers,
+                stamps=stamps if from_pattern else None,
+                decode_times=not from_pattern)
 
         if failures and not allow_partial:
             raise RuntimeError(
@@ -424,16 +552,23 @@ class HTTPAdapter(AdapterBase):
 
     @staticmethod
     def _download_one(url, region, rate_limiter=None, max_retries=0, backoff=0.0,
-                      verbose=True):
+                      verbose=True, stamp=None, decode_times=True):
         """Download a single NetCDF file and return (url, xr.Dataset).
 
         Per-file retries + an optional shared rate limiter live here so they
         apply to each worker thread; the pool itself only bounds concurrency.
+
+        ``stamp`` (with ``decode_times=False``) replaces the file's time axis
+        with what its filename implies — per file, BEFORE the caller concatenates
+        them, which is the only point at which a non-self-contained time
+        encoding can still be read correctly.
         """
         def _do():
             with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
-                urllib.request.urlretrieve(url, tmp.name)
-                ds = xr.open_dataset(tmp.name)
+                _retrieve(url, tmp.name)
+                ds = xr.open_dataset(tmp.name, decode_times=decode_times)
+                if stamp is not None:
+                    ds = _stamp_time(ds, stamp, url)
                 ds = _subset_region(ds, region)
                 os.unlink(tmp.name)
             return ds
@@ -445,14 +580,17 @@ class HTTPAdapter(AdapterBase):
         return url, ds
 
     def _fetch_netcdf_parallel(self, urls, region, progress, rate_limiter,
-                               max_retries, retry_backoff, verbose, max_workers):
+                               max_retries, retry_backoff, verbose, max_workers,
+                               stamps=None, decode_times=True):
         results = {}
         errors = []
+        stamps = [None] * len(urls) if stamps is None else stamps
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
                 pool.submit(self._download_one, u, region,
-                            rate_limiter, max_retries, retry_backoff, verbose): u
-                for u in urls
+                            rate_limiter, max_retries, retry_backoff, verbose,
+                            stamp=st, decode_times=decode_times): u
+                for u, st in zip(urls, stamps)
             }
             for fut in _iter(as_completed(futures), "acmadDL HTTP download", enabled=progress):
                 try:

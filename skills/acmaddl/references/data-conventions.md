@@ -37,16 +37,19 @@
    may remain `mm/day`, while native pentad/dekad/annual accumulations remain
    `mm`.
 9. **Fill-value masking** — catalog `fill_value` (e.g. -9999) -> NaN.
-10. **Latitude ascending** — `ds.sortby("lat")`. Canonical convention: lat always ascending.
-11. **Spatial selection** — polygon clip (`clip_to_geometry`, rioxarray `.rio.clip`, `all_touched = (boundary == "cover")`) when a geometry was given; otherwise bbox `.sel(lat=slice, lon=slice)` (cover mode expands by half a grid cell).
-12. **CF axis attributes** — `lat.axis="Y"`, `lon.axis="X"`, `time`/`init_time` `.axis="T"`.
-13. **`year_index`** — if requested and `init_time` is a dim, replace it with integer `year` and collapse `lead_time`. Targeted precipitation has a uniform seasonal-total contract (`mm`): monthly `mm/day` rates are multiplied by each target month’s exact day count and summed; daily amounts are summed; server-averaged rates are multiplied by the exact season length. Other variables retain the lead-mean behavior.
+10. **`scale`** (optional, catalog-driven) — a per-variable multiplier, applied last of the value transforms. It expresses a **sign** convention that differs from acmaddl's, not a unit change: `obs/era5-land-monthly` `pev` declares `scale: -1.0` because ERA5 serves potential evaporation as a negative upward flux, so with the `m -> mm/day` conversion it comes out as a positive rate directly comparable to `precip` in the same entry. Deliberately **after** step 9 — scaling first would turn a `-999` sentinel into plausible-looking `+999` data. The `units` label from step 8 is preserved.
+11. **Latitude ascending** — `ds.sortby("lat")`. Canonical convention: lat always ascending.
+12. **Spatial selection** — polygon clip (`clip_to_geometry`, rioxarray `.rio.clip`, `all_touched = (boundary == "cover")`) when a geometry was given; otherwise bbox `.sel(lat=slice, lon=slice)` (cover mode expands by half a grid cell).
+13. **CF axis attributes** — `lat.axis="Y"`, `lon.axis="X"`, `time`/`init_time` `.axis="T"`.
+14. **`year_index`** — if requested and `init_time` is a dim, replace it with integer `year` and collapse `lead_time`. Targeted precipitation has a uniform seasonal-total contract (`mm`): monthly `mm/day` rates are multiplied by each target month’s exact day count and summed; daily amounts are summed; server-averaged rates are multiplied by the exact season length. Other variables retain the lead-mean behavior.
 
 ## Canonical output schema
 
 - Coordinates: `lat`, `lon` (ascending lat, lon in [-180, 180]); `time` (obs, `datetime64`); `init_time` (forecasts, `datetime64`); `lead_time` (numeric, source-dependent units); `member` (integer ensemble index). With `year_index=True`: integer `year` replaces `init_time`.
 - Typical dims — forecasts: `(init_time, lead_time, member, lat, lon)`; observations: `(time, lat, lon)`; `assemble()` output: `(year, member, lat, lon)`.
-- Units: collapsed targeted seasonal forecasts (`year_index=True`/`assemble`) use precip `mm` across adapter families. Lead-resolved and daily precipitation generally remains `mm/day`; native CHIRPS pentad/dekad/annual products keep `mm` totals. Temp is `C`; sst is mostly `K` (ERA5 sst is `C`).
+- Units: collapsed targeted seasonal forecasts (`year_index=True`/`assemble`) use precip `mm` across adapter families. Lead-resolved and daily precipitation generally remains `mm/day`; native CHIRPS pentad/dekad/annual products keep `mm` totals, and `obs/tamsat` / `obs/gpcc-*` keep `mm/month`. Temp is `C`; sst is mostly `K` (ERA5 sst is `C`); `pev` is `mm/day`.
+
+  **The `mm` seasonal-total contract is a FORECAST contract.** It lives in the `year_index` branch (step 14), which is gated on `init_time` being a dim — observations have none, so it never fires for them. An observational fetch with `seasonal="mean"` returns the **mean** of the season's months in the entry's own `target_units`, never a seasonal total: `obs/cmap` JAS 2015 over the Sahel is ~4.7 `mm/day`, where the same season as a total would be ~436 `mm`. Multiply by the season's day count (or its month count, for a `mm/month` product) before comparing an obs field against an `assemble()` forecast.
 
 ## Season strings
 
@@ -75,7 +78,8 @@ A season `target` cannot combine with an issuance sequence (target selects leads
 
 The 0-360 vs -180..180 longitude footgun is now handled by named helpers rather than ad-hoc slicing:
 
-- `normalize.select_lon(ds, lon_w, lon_e, lon_name="lon")` — convention-aware longitude subselection. Short-circuits to "return everything" on a full-globe request (span ≥ 359°), translates the requested bounds into the source's convention, and handles a seam-crossing box (west > east after translation) by selecting both sides and concatenating. Shared by the OPeNDAP adapter (pre-normalize, dim may be `X`) and `normalize` (dim `lon`), because the source convention is only known once the data is opened.
+- `normalize.select_lon(ds, lon_w, lon_e, lon_name="lon")` — convention-aware longitude subselection. Short-circuits to "return everything" on a full-globe request (span ≥ 359°), translates the requested bounds into the source's convention, and handles a seam-crossing box (west > east after translation) by selecting both sides and concatenating. Shared by the `http` adapter and `normalize` (dim `lon`), because the source convention is only known once the data is opened.
+- `normalize.lon_selection_bounds(lon_values, lon_w, lon_e)` — the same convention/seam arithmetic, exposed as the 1-2 contiguous `(start, stop)` pairs rather than a selected dataset, so a caller can plan *requests* with it. `select_lon` is built on it. The OPeNDAP adapter uses it directly: a lazily seam-concatenated DAP selection is one malformed request that NOAA PSL answers with zeros at any size, so each segment must be requested contiguously and joined after loading.
 - `fetch._match_lon_convention(obj, target_lons)` — used by regrid/interp (`grid_res`/`regrid_to`): rolls the source's longitude into the target grid's convention (and re-sorts) before `.interp`, so interpolating a 0-360 source onto a grid with negative longitudes doesn't silently NaN the western band.
 - `normalize.sanitize_for_netcdf(ds)` — rebuilds a dataset from fresh arrays (dropping CF bounds vars and stale inherited encoding) so OPeNDAP/CF results round-trip through `to_netcdf` instead of raising `NetCDF: String match to name in use`. Applied to every `fetch` result.
 

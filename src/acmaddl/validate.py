@@ -78,7 +78,18 @@ _VALUE_RANGES = {
     "precip": (0.0, 500.0),      # default rate range (mm/day)
     "temp": (-90.0, 70.0),       # Celsius
     "sst": (-3.0, 45.0),         # Celsius (ERSST valid_min/max)
+    "pev": (0.0, 30.0),          # potential evaporation, mm/day
 }
+
+# How far outside its declared range a value may stray before the check fails.
+# Wide for temperatures, whose absolute magnitudes are large and whose K->C
+# boundary is rough. Tight for a NON-NEGATIVE rate: a hair below zero is an
+# interpolation/regrid artifact, but a substantially negative one is a sign or
+# unit bug — ERA5 serving potential evaporation as a negative upward flux is the
+# case in point, and a 50-wide slack would wave a flipped pev field straight
+# through.
+_RANGE_SLACK = {"precip": 1.0, "pev": 1.0}
+_DEFAULT_RANGE_SLACK = 50.0
 
 
 def check_structure(ds, product, variable, product_config=None):
@@ -92,6 +103,11 @@ def check_structure(ds, product, variable, product_config=None):
 
     Returns:
         dict of {check_name: {"passed": bool, "detail": str}}
+
+    Checks: ``variable_present``, ``has_units``, ``spatial_dims``,
+    ``not_all_nan``, ``value_range``, ``member_count``, and one coverage check —
+    ``hindcast_range`` (forecasts, informational) or ``coverage_range``
+    (observations, a real pass/fail against the catalog's declared years).
     """
     checks = {}
 
@@ -133,12 +149,19 @@ def check_structure(ds, product, variable, product_config=None):
         lo, hi = _VALUE_RANGES[variable]
         if variable == "precip" and da.attrs.get("units") == "mm":
             hi = 5000.0  # accumulated target-season / multi-day precipitation
+        elif variable == "precip" and da.attrs.get("units") == "mm/month":
+            # Monthly TOTALS (obs/gpcc-*, obs/tamsat), not a daily rate. Gridded
+            # monthly maxima reach ~2000-2500 mm in Meghalaya/Chocó, so 3000
+            # leaves headroom while still catching a x30 rate/total mix-up.
+            hi = 3000.0
+        slack = _RANGE_SLACK.get(variable, _DEFAULT_RANGE_SLACK)
         vmin = float(da.min(skipna=True))
         vmax = float(da.max(skipna=True))
-        plausible = vmin >= lo - 50 and vmax <= hi + 50
+        plausible = vmin >= lo - slack and vmax <= hi + slack
         checks["value_range"] = {
             "passed": plausible,
-            "detail": f"min={vmin:.2f}, max={vmax:.2f} (expected ~{lo}..{hi})",
+            "detail": f"min={vmin:.2f}, max={vmax:.2f} "
+                      f"(expected ~{lo}..{hi}, slack {slack})",
         }
 
     # Member count (if catalog config provided). A model's real-time forecast and
@@ -157,11 +180,28 @@ def check_structure(ds, product, variable, product_config=None):
 
         expected_range = product_config["grid"].get("hindcast_range")
         if expected_range and "init_time" in ds.dims:
+            # Forecasts: `hindcast_range` is the model's reforecast window, NOT a
+            # data cap — real-time inits run past it by design (see the
+            # catalog.yaml header). Report it, never fail on it.
             import pandas as pd
             times = pd.DatetimeIndex(ds.init_time.values)
             actual_years = (int(times.min().year), int(times.max().year))
             checks["hindcast_range"] = {
                 "passed": True,
+                "detail": f"actual={actual_years}, catalog={expected_range} "
+                          f"(informational: not a cap for forecasts)",
+            }
+        elif expected_range and "time" in ds.dims:
+            # Observations/reanalysis: for these `hindcast_range` DOES denote data
+            # coverage, so data outside it means the catalog is wrong — either a
+            # declared start that is too late, or an end year that has gone stale.
+            import pandas as pd
+            times = pd.DatetimeIndex(ds.time.values)
+            actual_years = (int(times.min().year), int(times.max().year))
+            lo, hi_year = expected_range
+            inside = actual_years[0] >= lo and actual_years[1] <= hi_year
+            checks["coverage_range"] = {
+                "passed": inside,
                 "detail": f"actual={actual_years}, catalog={expected_range}",
             }
 

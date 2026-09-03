@@ -60,7 +60,7 @@ catalog.info("nmme/cfsv2")   # full config: variables, grid, streams, adapter
 - `boundary`: `"center"` (default) or `"cover"` (keep every cell the region touches).
 - `cache=True` (default): nuthatch-backed local cache; `cache=False` bypasses it.
 - `months=[6,7,8,9]`: restrict an **observational** fetch to those calendar months (rejected with `init`); for one-file-per-(year,month) HTTP products it prunes the download, not just the result.
-- `degenerate_attempts=1` (default): the zero-fill/truncation guard on the general path is **opt-in** — pass `>1` to validate + retry a fetch you don't trust. OPeNDAP-obs products (`obs/ersst-v5`, `obs/cmap`) validate always. Do not assume universal protection.
+- `degenerate_attempts=1` (default): the zero-fill/truncation guard on the general path is **opt-in** — pass `>1` to validate + retry a fetch you don't trust. OPeNDAP-obs products (`obs/ersst-v5`, `obs/cmap`, `obs/oisst-v2-highres`) validate always. Do not assume universal protection.
 - `init=[...]`: a **sequence** of `"YYYY-MM-DD"` dates — only for issuance-keyed products (CHIRPS-GEFS); stacks on `init_time`.
 
 ## Multi-model assembly (feeding deepscale)
@@ -166,11 +166,15 @@ The repo ships `fetch_country_shapefiles.py` under its `scripts/` directory, whi
 
 - **NMME seasonal** (`nmme/*`, no creds) — CFSv2, CCSM4, CESM1, GEOSS2S, SPEAR, CanSIPS. `single_year_fetch` on CCSM4/CESM1/GEOSS2S/SPEAR chunks per year (full-range CCSR requests silently zero-fill).
 - **C3S seasonal** (`c3s/*`, CDS creds) and **S2S** (`c3s/ecmwf-s2s`, ECDS creds).
-- **Reanalysis** (`obs/era5`, `obs/era5-land-monthly`, CDS creds).
-- **NOAA PSL OPeNDAP obs** (no creds) — `obs/ersst-v5` (2° monthly SST, ~1954-present) and `obs/cmap` (2.5° monthly precip, ~1979-present). Chunked (`max_request_years`) with the always-on truncation guard.
+- **Reanalysis** (`obs/era5`, `obs/era5-land-monthly`, CDS creds). ERA5-Land also carries `pev` (potential evaporation), returned as a **positive** `mm/day` rate — the catalog flips ERA5's negative upward-flux sign via `scale: -1.0`.
+- **NOAA PSL OPeNDAP obs** (no creds) — `obs/ersst-v5` (2° monthly SST, ~1954-present), `obs/cmap` (2.5° monthly precip, ~1979-present) and `obs/oisst-v2-highres` (0.25° monthly SST, Sep 1981-present). Chunked with the always-on truncation guard — bounded by `max_request_years` *and* a response-size budget, with seam-crossing regions split into separate contiguous requests, so any region size works.
 - **CHIRPS** (CHC/UCSB, rate-limited; also Rhiza/Sheerwater mirrors) — monthly/pentad/dekad/annual, plus new `obs/chirps-v3-dekad-tif` (final) and `obs/chirps-v3-dekad-prelim` (near-real-time tail).
 - **CHIRPS-GEFS short-range forecasts** (issuance-keyed, no creds) — `chc/chirps-gefs-daily` (16 daily leads; hindcast 2001-2019, forecast 2021-present, 2020 absent) and `chc/chirps-gefs-15day` (single 15-day accumulation).
 - **TAMSAT** (`obs/tamsat`, JASMIN public, no creds) — 0.0375° monthly precip, kept in `mm/month`, Africa land-only.
+- **GPCC gauge analyses** (`obs/gpcc-monitoring-v2020` 1982-, `obs/gpcc-first-guess` **2013**-, DWD open data, no creds) — 1° monthly gauge-only precip in `mm/month`. Gzipped NetCDF whose time axis comes from the filename (`time_from_pattern`).
+- **GPCP v2.3** (`obs/gpcp-v2-3`, NOAA NCEI, no creds) — 2.5° monthly satellite-gauge merged precip in `mm/day`, 1979-. Filenames carry a processing-date suffix resolved by a `*` against the directory listing; the sibling `-preliminary` stream is deliberately excluded.
+
+**Observations are never `mm` seasonal totals.** The `mm` contract belongs to the forecast `year_index`/`assemble()` path; an obs fetch with `seasonal="mean"` returns the mean of the season's months in that entry's own units. See [references/data-conventions.md](references/data-conventions.md).
 
 ## Caching
 

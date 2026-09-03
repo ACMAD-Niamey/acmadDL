@@ -9,6 +9,7 @@ hindcast range -> forecast), mirroring the CCSR adapter's split-stream routing.
 These tests capture the opened URL (no network).
 """
 import numpy as np
+import pytest
 import xarray as xr
 
 
@@ -248,3 +249,158 @@ def test_empty_segment_drops_L_even_when_no_lead_matches_at_all(monkeypatch):
     assert "L" not in out.dims, f"L should be reduced away, got dims {out.dims}"
     assert out["prec"].ndim == 4, out["prec"].dims
     assert out.sizes["S"] == 2
+
+
+# ── Seam-crossing regions must become SEPARATE contiguous requests ──────────
+# NOAA PSL answers a lazily seam-concatenated selection with a zero-filled
+# array. Probe-verified 2026-09-02 against obs/oisst-v2-highres: an 80x90 deg
+# Africa box truncated at every chunk size tried (230k values upward), while the
+# same 115,200 cells/step loaded fine — up to 2.76M values — as one contiguous
+# request, and loading each side of the seam separately then joining returned
+# real data. So the defect is the shape of the request, not its size.
+#
+# The observable signature is a NON-MONOTONIC lon axis reaching the loader:
+# [330..360, 0..60]. Each request must instead carry an ascending lon axis.
+
+from acmaddl.adapters import opendap as opendap_mod  # noqa: E402
+
+
+@pytest.fixture
+def obs_source(monkeypatch):
+    """A lazy-looking obs dataset on a 0..360 grid, plus the loads it receives."""
+    import pandas as pd
+    times = pd.date_range("2015-01-01", "2016-12-01", freq="MS")
+    lat = np.arange(-40.0, 40.5, 1.0)
+    lon = np.arange(0.0, 360.0, 1.0)
+    data = np.random.default_rng(0).random(
+        (len(times), len(lat), len(lon))).astype("float32")
+    ds = xr.Dataset(
+        {"sst": (["time", "lat", "lon"], data)},
+        coords={"time": times.values.astype("datetime64[ns]"), "lat": lat, "lon": lon},
+    )
+    monkeypatch.setattr(opendap_mod.xr, "open_dataset", lambda *a, **k: ds)
+
+    seen = []
+    real = opendap_mod._load_obs_chunks
+
+    def spy(sub, variable, y0, y1, *args, **kwargs):
+        seen.append(sub)
+        return real(sub, variable, y0, y1, *args, **kwargs)
+    monkeypatch.setattr(opendap_mod, "_load_obs_chunks", spy)
+    return ds, seen
+
+
+OBS_CONFIG = {
+    "adapter": "opendap",
+    "source_url": "https://psl.example.invalid/sst.mon.mean.nc",
+    "url_template": "{base}",
+    "decode_times": True,
+    "max_request_years": 2,
+    "variables": {"sst": {"native_name": "sst", "units": "degC", "target_units": "C"}},
+    "_verbose": False,
+}
+
+
+def _ascending(values):
+    return bool(np.all(np.diff(values) > 0))
+
+
+def test_a_seam_crossing_region_is_loaded_as_two_contiguous_requests(obs_source):
+    _, seen = obs_source
+    opendap_mod.OPeNDAPAdapter().fetch_data(
+        OBS_CONFIG, "sst", date_range=(2015, 2016), region=[-40, 40, -30, 60])
+    assert len(seen) == 2, f"expected one request per seam segment, got {len(seen)}"
+    for sub in seen:
+        assert _ascending(sub.lon.values), (
+            f"request carries a non-monotonic lon axis "
+            f"({sub.lon.values[:3]} .. {sub.lon.values[-3:]}) — this is the "
+            f"malformed DAP request PSL zero-fills")
+
+
+def test_the_two_segments_are_joined_into_the_full_requested_box(obs_source):
+    source, _ = obs_source
+    out = opendap_mod.OPeNDAPAdapter().fetch_data(
+        OBS_CONFIG, "sst", date_range=(2015, 2016), region=[-40, 40, -30, 60])
+    lons = out.lon.values
+    assert (lons >= 330).any() and (lons <= 60).any()
+    # Same cells select_lon would have chosen, and the real values, not zeros.
+    expected = np.concatenate([np.arange(330.0, 360.0), np.arange(0.0, 61.0)])
+    np.testing.assert_array_equal(np.sort(lons), np.sort(expected))
+    assert float(out["sst"].std()) > 0
+
+
+def test_a_contiguous_region_is_still_a_single_request(obs_source):
+    _, seen = obs_source
+    opendap_mod.OPeNDAPAdapter().fetch_data(
+        OBS_CONFIG, "sst", date_range=(2015, 2016), region=[-40, 40, 30, 60])
+    assert len(seen) == 1
+    assert _ascending(seen[0].lon.values)
+
+
+# ── Response-size budget on top of max_request_years ───────────────────────
+# `max_request_years` cannot bound a DAP response on its own, because the size
+# of one time step depends on how many cells the caller asked for. Measured
+# against NOAA PSL 2026-09-02 (contiguous requests, global 0.25 deg OISST,
+# 1,036,800 cells/step): 6.2M values (24.9 MB) OK, 8.3M (33.2 MB) truncated —
+# i.e. a ~32 MiB server cap. A global 2-year request at max_request_years=2 is
+# 24.9M values and always truncated, so the year cap needs a size companion.
+
+from acmaddl.adapters.opendap import _load_obs_chunks, _steps_per_chunk  # noqa: E402
+
+
+def _monthly(n_months, cells_lat=2, cells_lon=2, start="1991-01-01"):
+    import pandas as pd
+    times = pd.date_range(start, periods=n_months, freq="MS")
+    lat = np.arange(float(cells_lat))
+    lon = np.arange(float(cells_lon))
+    data = np.arange(n_months * cells_lat * cells_lon, dtype="float32").reshape(
+        n_months, cells_lat, cells_lon)
+    return xr.Dataset(
+        {"sst": (["time", "lat", "lon"], data)},
+        coords={"time": times.values.astype("datetime64[ns]"), "lat": lat, "lon": lon},
+    )
+
+
+def test_a_small_request_is_bounded_by_the_year_cap():
+    """4 cells/step: the size budget is nowhere near binding, so 5 years = 60."""
+    window = _monthly(120)
+    assert _steps_per_chunk(window, "sst", max_years=5, max_values=4_000_000) == 60
+
+
+def test_a_wide_request_is_bounded_by_the_size_budget():
+    """1,036,800 cells/step (global 0.25 deg) against a 4M budget -> 3 steps,
+    not the 24 that max_request_years=2 would ask for."""
+    window = _monthly(24, cells_lat=720, cells_lon=1440)
+    assert _steps_per_chunk(window, "sst", max_years=2, max_values=4_000_000) == 3
+
+
+def test_a_single_step_over_budget_still_yields_one_step():
+    """Never zero: one oversized step must still be attempted (and the
+    degenerate guard will report it) rather than looping forever."""
+    window = _monthly(6, cells_lat=3000, cells_lon=3000)
+    assert _steps_per_chunk(window, "sst", max_years=5, max_values=1000) == 1
+
+
+def test_the_budget_never_exceeds_the_steps_available():
+    window = _monthly(7)
+    assert _steps_per_chunk(window, "sst", max_years=5, max_values=4_000_000) == 7
+
+
+def test_a_size_split_reassembles_the_record_exactly():
+    """The whole point: more requests, identical data, in order."""
+    ds = _monthly(36)
+    got = _load_obs_chunks(ds, "sst", 1991, 1993, 5, verbose=False, label="test",
+                           max_values=8)   # 4 cells/step -> 2 steps per request
+    assert got.sizes["time"] == 36
+    np.testing.assert_array_equal(got.sst.values, ds.sst.values)
+    np.testing.assert_array_equal(got.time.values, ds.time.values)
+
+
+def test_a_size_split_actually_issues_more_requests(monkeypatch):
+    calls = []
+    monkeypatch.setattr(opendap_mod, "_reject_degenerate",
+                        lambda *a, **k: calls.append(a[2]))
+    ds = _monthly(36)
+    _load_obs_chunks(ds, "sst", 1991, 1993, 5, verbose=False, label="test",
+                     max_values=8)
+    assert len(calls) == 18, f"expected 18 two-step requests, got {len(calls)}"

@@ -391,3 +391,144 @@ def test_validate_cfsv2_self():
     assert result.status == "PASS"
     assert result.structural_checks["variable_present"]["passed"]
     assert result.structural_checks["value_range"]["passed"]
+
+
+# ── Monthly-total precip and observational coverage ─────────────────────────
+# Added with the GPCC entries. Two gaps showed up:
+#   * the precip value range is a mm/day rate range, so a legitimate mm/month
+#     total from a monsoon region reads as implausible
+#   * the hindcast_range check only looked at `init_time` and hard-coded
+#     passed=True, so an observational product's declared coverage was never
+#     actually checked against the data that came back
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+from acmaddl.validate import check_structure
+
+
+def _obs(years, value=100.0, units="mm/month", variable="precip"):
+    times = pd.to_datetime([f"{y}-08-01" for y in years])
+    lat = np.arange(8.0, 12.0, 1.0)
+    lon = np.arange(-2.0, 2.0, 1.0)
+    data = np.full((len(times), len(lat), len(lon)), value, dtype="float32")
+    ds = xr.Dataset(
+        {variable: (["time", "lat", "lon"], data)},
+        coords={"time": times.values.astype("datetime64[ns]"), "lat": lat, "lon": lon},
+    )
+    ds[variable].attrs["units"] = units
+    return ds
+
+
+def _cfg(hindcast_range):
+    return {"grid": {"hindcast_range": list(hindcast_range)},
+            "variables": {"precip": {}}}
+
+
+def test_a_monsoon_monthly_total_is_plausible():
+    """1200 mm/month is a real monsoon month, not a broken unit conversion.
+
+    Against the mm/day rate ceiling it reads as implausible, which would make
+    the check cry wolf on every obs/gpcc-* or obs/tamsat fetch over South Asia.
+    """
+    checks = check_structure(_obs([2020], value=1200.0), "obs/gpcc-monitoring-v2020",
+                             "precip", _cfg((1982, 2026)))
+    assert checks["value_range"]["passed"], checks["value_range"]["detail"]
+
+
+def test_an_absurd_monthly_total_is_still_rejected():
+    """The ceiling must still catch a genuine unit or scale error."""
+    checks = check_structure(_obs([2020], value=50_000.0), "obs/gpcc-monitoring-v2020",
+                             "precip", _cfg((1982, 2026)))
+    assert not checks["value_range"]["passed"]
+
+
+def test_a_daily_rate_keeps_the_stricter_rate_ceiling():
+    """Regression: mm/day products must not inherit the monthly headroom."""
+    checks = check_structure(_obs([2020], value=1200.0, units="mm/day"),
+                             "obs/gpcp-v2-3", "precip", _cfg((1979, 2026)))
+    assert not checks["value_range"]["passed"]
+
+
+def test_observed_years_inside_the_declared_coverage_pass():
+    checks = check_structure(_obs([2000, 2010, 2020]), "obs/gpcc-monitoring-v2020",
+                             "precip", _cfg((1982, 2026)))
+    assert checks["coverage_range"]["passed"], checks["coverage_range"]["detail"]
+
+
+def test_data_earlier_than_the_declared_start_is_flagged():
+    """The catalog claims 1982-; data from 1975 means the declared start is wrong."""
+    checks = check_structure(_obs([1975, 2020]), "obs/gpcc-monitoring-v2020",
+                             "precip", _cfg((1982, 2026)))
+    assert not checks["coverage_range"]["passed"]
+    assert "1975" in checks["coverage_range"]["detail"]
+
+
+def test_data_later_than_the_declared_end_is_flagged():
+    """Catches a declared end year that has gone stale."""
+    checks = check_structure(_obs([2020, 2026]), "obs/gpcc-monitoring-v2020",
+                             "precip", _cfg((1982, 2025)))
+    assert not checks["coverage_range"]["passed"]
+
+
+def test_a_forecasts_hindcast_range_stays_informational():
+    """`hindcast_range` is NOT a cap for forecasts — real-time inits run past it
+    by design (see the catalog.yaml header), so it must never be a failure."""
+    times = pd.to_datetime(["2024-02-01"])
+    ds = xr.Dataset(
+        {"precip": (["init_time", "lat", "lon"], np.full((1, 2, 2), 3.0, dtype="float32"))},
+        coords={"init_time": times.values.astype("datetime64[ns]"),
+                "lat": [8.0, 9.0], "lon": [1.0, 2.0]},
+    )
+    ds["precip"].attrs["units"] = "mm/day"
+    checks = check_structure(ds, "nmme/cfsv2", "precip", _cfg((1982, 2011)))
+    assert checks["hindcast_range"]["passed"]
+    assert "coverage_range" not in checks
+
+
+# ── pev, and a slack that doesn't swallow a sign flip ───────────────────────
+# The plausibility check allowed ±50 outside every variable's range. That slack
+# suits temp/sst (wide absolute magnitudes) but makes the check useless for a
+# NON-NEGATIVE rate: -9 mm/day of potential evaporation — exactly the ERA5
+# sign-convention regression the pev entry guards against — sat comfortably
+# inside `0 - 50`.
+
+def test_a_positive_pev_rate_is_plausible():
+    ds = _obs([2020], value=9.0, units="mm/day", variable="pev")
+    checks = check_structure(ds, "obs/era5-land-monthly", "pev",
+                             {"grid": {"hindcast_range": [1950, 2026]},
+                              "variables": {"pev": {}}})
+    assert checks["value_range"]["passed"], checks["value_range"]["detail"]
+
+
+def test_a_negative_pev_rate_is_flagged():
+    """The ERA5 sign convention leaking through would look exactly like this."""
+    ds = _obs([2020], value=-9.0, units="mm/day", variable="pev")
+    checks = check_structure(ds, "obs/era5-land-monthly", "pev",
+                             {"grid": {"hindcast_range": [1950, 2026]},
+                              "variables": {"pev": {}}})
+    assert not checks["value_range"]["passed"], checks["value_range"]["detail"]
+
+
+def test_negative_precipitation_is_flagged():
+    """Negative rainfall is never physical, whatever the slack."""
+    checks = check_structure(_obs([2020], value=-20.0, units="mm/day"),
+                             "obs/gpcp-v2-3", "precip", _cfg((1979, 2026)))
+    assert not checks["value_range"]["passed"]
+
+
+def test_a_slightly_negative_interpolation_artifact_is_tolerated():
+    """Regridding/interpolation can undershoot zero by a hair; don't cry wolf."""
+    checks = check_structure(_obs([2020], value=-0.4, units="mm/day"),
+                             "obs/gpcp-v2-3", "precip", _cfg((1979, 2026)))
+    assert checks["value_range"]["passed"], checks["value_range"]["detail"]
+
+
+def test_extreme_but_real_cold_still_passes():
+    """Regression: temp keeps its wide slack (Vostok has hit -89.2 C)."""
+    checks = check_structure(_obs([2020], value=-89.2, units="C", variable="temp"),
+                             "obs/era5", "temp",
+                             {"grid": {"hindcast_range": [1940, 2026]},
+                              "variables": {"temp": {}}})
+    assert checks["value_range"]["passed"], checks["value_range"]["detail"]

@@ -11,7 +11,10 @@ from .region import resolve_region
 
 from .storage import save
 
-_CACHE_VERSION = 8  # bump when adapter logic or normalization changes
+_CACHE_VERSION = 9  # bump when adapter logic or normalization changes
+# 9: the http adapter's region crop now selects longitude through
+#    normalize.select_lon, so a bbox that crosses the prime meridian against a
+#    0..360 source keeps both sides instead of only its eastern half.
 
 
 def _fetch_raw(product: str, variable: str, config: dict,

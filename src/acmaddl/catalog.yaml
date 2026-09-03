@@ -1321,6 +1321,41 @@ obs/ersst-v5:
     the 1991-2020 WMO baseline used by ONI/RONI/IOD index verification. Latitude
     is stored north-to-south upstream; the adapter sorts it ascending.
 
+# NOAA OISST v2.1 high-resolution SST -- the 0.25deg sibling of obs/ersst-v5 (2deg).
+# NOAA PSL serves the whole 1981-present record BOTH as a single ~2.2 GB file over
+# plain HTTP (downloads.psl.noaa.gov) and over THREDDS/OPeNDAP. This entry uses
+# OPeNDAP so a request is subset server-side: an Africa-bbox season costs a few MB
+# instead of the whole globe. Same PSL truncation guard as ERSST/CMAP, but a smaller
+# chunk -- at 0.25deg a global month is ~1.04M cells (64x ERSST's), so the request
+# that fits in one DAP response covers correspondingly fewer years.
+obs/oisst-v2-highres:
+  adapter: opendap
+  source_url: "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc"
+  url_template: "{base}"
+  decode_times: true      # ordinary "days since 1800-1-1", like ERSST
+  # An upper bound on years per DAP request; the adapter tightens it further with
+  # a response-size budget (see _steps_per_chunk), so a wide region is split into
+  # sub-year requests automatically. Any region size works, global included --
+  # probe-verified 2026-09-02.
+  max_request_years: 2
+  variables:
+    sst:
+      native_name: sst
+      units: degC        # as the file declares it
+      target_units: C    # acmaddl's canonical Celsius label
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    hindcast_range: [1981, 2026]
+    temporal: monthly
+  notes: >-
+    NOAA OISST v2.1 (AVHRR-only high-res), 0.25deg monthly means, Sep 1981-present.
+    Probe-verified 2026-09-02: 540 months, lat ascending -89.875..89.875, lon 0..360,
+    units degC. The high-resolution counterpart to obs/ersst-v5 -- use ERSST for long
+    homogeneous baselines (1954-) and OISST where coastal/upwelling detail matters.
+    Being an ocean-only field it shares ERSST's land-mask gotcha: a land-only bbox is
+    legitimately all-NaN and the always-on obs-chunk guard rejects it.
+
 obs/era5:
   adapter: cds
   cds_dataset: "reanalysis-era5-single-levels-monthly-means"
@@ -1375,6 +1410,19 @@ obs/era5-land-monthly:
       short_name: t2m
       units: K
       target_units: C
+    # Potential evaporation: the reference evaporative demand for water-balance and
+    # drought work (SPEI, P-PET), served by CDS in metres of water equivalent with
+    # ERA5's flux SIGN convention -- negative means upward, i.e. evaporation. The
+    # m -> mm/day conversion handles the magnitude (x1000, as for precip above) and
+    # `scale: -1.0` handles the sign, so pev comes out as a positive rate directly
+    # comparable to precip in the same entry. Verified live 2026-09-02 (Jul 2020,
+    # 5-20N/10W-10E): raw mean -0.0090 m -> +9.0 mm/day, a plausible Sahel July PET.
+    pev:
+      native_name: potential_evaporation
+      short_name: pev
+      units: m
+      target_units: "mm/day"
+      scale: -1.0
   grid:
     lat_res: 0.1
     lon_res: 0.1
@@ -1611,3 +1659,107 @@ obs/cams-opi:
     alternative. Regrid to the forecast grid is a linear interp (grid_res=/regrid_to=);
     ACMAD upsamples 2.5->0.5deg server-side (area-weighted), a minor interpolation-path
     difference.
+# GPCC monthly gauge analyses from DWD's open-data server. Two streams of the same
+# 1deg product: monitoring_v2020 is the quality-controlled analysis (1982-, ~2-month
+# lag) and first_guess is the near-real-time estimate (~1-month lag). Gauge-only, so
+# they complement the satellite-merged products above (obs/cmap, obs/gpcp-v2-3) rather
+# than duplicating them.
+#
+# BOTH need `time_from_pattern` -- their in-file time axes are unusable as served:
+#   monitoring_v2020  time = 20240301.0, units "day as %Y%m%d.%f" (a GrADS
+#                     convention, not CF "<unit> since <epoch>", so nothing decodes it)
+#   first_guess       time = 0.0, units "months since 2024-3-1 00:00:00" -- unpadded,
+#                     so decode_times=True RAISES; and since every file says 0 against
+#                     its own reference month, concatenating them without per-file
+#                     stamping collapses the whole record onto a single date.
+# The files are also gzipped (.nc.gz), which the adapter expands before opening.
+#
+# Units follow obs/tamsat: native monthly TOTALS are kept as mm/month rather than
+# divided by a flat 30 into a fake daily rate. Note the contrast with the forecast
+# side, where a collapsed targeted season is mm -- an obs fetch with seasonal="mean"
+# returns the MEAN of the season's monthly totals, not the seasonal total.
+obs/gpcc-monitoring-v2020:
+  adapter: http
+  source_url: "https://opendata.dwd.de/climate_environment/GPCC/monitoring_v2020"
+  file_pattern: "{year}/monitoring_v2020_10_{year}_{month:02d}.nc.gz"
+  format: netcdf
+  time_from_pattern: true
+  request_interval: 0.5    # courtesy floor for a public government server
+  variables:
+    precip:
+      native_name: p
+      units: "mm/month"
+      target_units: "mm/month"
+      # -99999.99 is declared as _FillValue upstream, so xarray masks it on open;
+      # no explicit fill_value needed here.
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    hindcast_range: [1982, 2026]
+    temporal: monthly
+  notes: >-
+    GPCC Monitoring Product v2020, 1deg monthly gauge analysis (DWD), 1982-present
+    with a ~2-month lag (probe-verified 2026-09-02: 1982-01 present, 1981-01 absent,
+    latest 2026-06). The file carries seven further fields beside `p` -- gauge count
+    `s`, interpolation and gauge errors, solid/liquid fractions -- which pass through
+    unused. Latitude is stored north-to-south upstream; normalize sorts it ascending.
+
+obs/gpcc-first-guess:
+  adapter: http
+  source_url: "https://opendata.dwd.de/climate_environment/GPCC/first_guess"
+  file_pattern: "{year}/first_guess_monthly_{year}_{month:02d}.nc.gz"
+  format: netcdf
+  time_from_pattern: true
+  request_interval: 0.5
+  variables:
+    precip:
+      native_name: p
+      units: "mm/month"
+      target_units: "mm/month"
+  grid:
+    lat_res: 1.0
+    lon_res: 1.0
+    hindcast_range: [2013, 2026]
+    temporal: monthly
+  notes: >-
+    GPCC First Guess monthly, 1deg (DWD), NetCDF from 2013-present with a ~1-month
+    lag -- the near-real-time companion to obs/gpcc-monitoring-v2020, based on far
+    fewer stations and superseded by the monitoring product once that catches up.
+    COVERAGE CAVEAT (probed 2026-09-02): the year directories go back to 2004, but
+    2004-2012 contain ONLY legacy GrADS binaries (gpcc_first_guess_MM_YYYY.gz); the
+    .nc.gz files this entry fetches begin in 2013, which is why hindcast_range starts
+    there. Use obs/gpcc-monitoring-v2020 for anything before 2013.
+
+# GPCP v2.3 monthly satellite-gauge merged precipitation, from the producing archive
+# (NOAA NCEI). The 2.5deg global standard for long-record merged precip, and the
+# lineage sibling of obs/cmap.
+#
+# NCEI stamps every filename with its processing date --
+# gpcp_v02r03_monthly_d202403_c20240607.nc -- which no static pattern can predict, so
+# the entry ends in a `*` and the adapter resolves it against the directory listing
+# (one listing per year). The same directory also holds a PRELIMINARY stream
+# (gpcp_v02r03-preliminary_monthly_...) for the months the final product hasn't
+# reached yet; the literal part of the pattern excludes it, so this entry is always
+# the settled product. Add a separate `-prelim` entry if the current-season tail is
+# ever needed, the way obs/chirps-v3-dekad-tif / -prelim are paired.
+obs/gpcp-v2-3:
+  adapter: http
+  source_url: "https://www.ncei.noaa.gov/data/global-precipitation-climatology-project-gpcp-monthly/access"
+  file_pattern: "{year}/gpcp_v02r03_monthly_d{year}{month:02d}_*.nc"
+  format: netcdf
+  variables:
+    precip:
+      native_name: precip
+      units: "mm/day"
+      target_units: "mm/day"
+  grid:
+    lat_res: 2.5
+    lon_res: 2.5
+    hindcast_range: [1979, 2026]
+    temporal: monthly
+  notes: >-
+    GPCP v2.3 monthly precipitation (NOAA NCEI), 2.5deg, 1979-present with a ~3-month
+    lag on the final stream (probe-verified 2026-09-02: 1979-01 present, 1978 absent,
+    final through 2026-05, preliminary 2026-06/07). Native mm/day, matching obs/cmap.
+    Files carry `precip_error` and CF bounds variables alongside `precip`; the bounds
+    are dropped by sanitize_for_netcdf on the way out.

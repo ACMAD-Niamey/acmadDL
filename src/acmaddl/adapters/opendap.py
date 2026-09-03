@@ -1,7 +1,8 @@
 import numpy as np
+import pandas as pd
 import xarray as xr
 from .base import AdapterBase
-from ..normalize import decode_months_since, select_lon
+from ..normalize import decode_months_since, lon_selection_bounds, select_lon
 from ._robust import (_DEFAULT_MAX_RETRIES, _DEFAULT_RETRY_BACKOFF, _with_retry,
                       reject_if_degenerate)
 
@@ -36,6 +37,17 @@ def _sort_ascending(ds, *coords):
 # response under any plausible cap; `_reject_degenerate` catches the rest.
 _DEFAULT_MAX_REQUEST_YEARS = 5
 
+# A year cap alone cannot bound a DAP response: the size of one time step
+# depends on how many CELLS the caller asked for, so the same
+# `max_request_years` that is safe for 2deg ERSST is hopeless for a global
+# 0.25deg OISST request. Measured against NOAA PSL 2026-09-02 with contiguous
+# global 0.25deg requests (1,036,800 cells/step): 6.2M values (24.9 MB) came
+# back fine, 8.3M (33.2 MB) came back zero-filled -- a ~32 MiB server cap. The
+# budget below is set near half of the observed ceiling, and is high enough that
+# every existing entry keeps its current single-request-per-year-block behaviour
+# (ERSST's 5-year block is ~960k values).
+_DEFAULT_MAX_REQUEST_VALUES = 4_000_000
+
 
 def _reject_degenerate(ds, variable, label):
     """Reject a bitwise-constant or all-NaN multi-step OPeNDAP response (a truncated DAP packet).
@@ -47,21 +59,58 @@ def _reject_degenerate(ds, variable, label):
     reject_if_degenerate(ds, variable, label, reject_all_nan=True)
 
 
-def _load_obs_chunks(ds, variable, y0, y1, max_years, verbose, label):
-    """Slice ``[y0, y1]`` in year blocks, loading and validating each in turn."""
-    chunks = []
-    for start in range(y0, y1 + 1, max_years):
-        end = min(start + max_years - 1, y1)
-        piece = ds.sel(time=slice(f"{start}-01-01", f"{end}-12-31"))
-        if piece.sizes.get("time", 0) == 0:
-            continue
-        if verbose:
-            print(f"[acmaddl:opendap] loading {start}-{end}")
-        piece = piece.load()
-        _reject_degenerate(piece, variable, f"{label} ({start}-{end})")
-        chunks.append(piece)
-    if not chunks:
+def _steps_per_chunk(window, variable, max_years, max_values):
+    """Time steps per DAP request: the year cap, tightened by a size budget.
+
+    Returns whichever is smaller — the steps implied by ``max_request_years`` at
+    this product's cadence, or the steps that fit in ``max_values`` given how
+    many cells the caller's region actually covers. Never zero: a single step
+    over budget is still attempted, and the degenerate guard reports it, rather
+    than looping forever on an empty slice.
+    """
+    n_time = int(window.sizes["time"])
+    da = window[variable] if variable in window else window
+    cells = 1
+    for dim, size in da.sizes.items():
+        if dim != "time":
+            cells *= int(size)
+
+    years = pd.DatetimeIndex(window["time"].values).year
+    span = max(1, int(years.max()) - int(years.min()) + 1)
+    steps_per_year = max(1, int(round(n_time / span)))
+
+    by_years = steps_per_year * max_years
+    by_values = max_values // max(1, cells)
+    return max(1, min(n_time, by_years, by_values))
+
+
+def _load_obs_chunks(ds, variable, y0, y1, max_years, verbose, label,
+                     max_values=None):
+    """Load ``[y0, y1]`` in request-sized blocks, validating each in turn.
+
+    Blocks are sized by :func:`_steps_per_chunk`, so a wide region is split into
+    sub-year requests instead of overflowing one response. Chunk labels stay
+    year-ranged, which is what the guard's error message reports.
+    """
+    window = ds.sel(time=slice(f"{y0}-01-01", f"{y1}-12-31"))
+    if window.sizes.get("time", 0) == 0:
         raise RuntimeError(f"OPeNDAP: {label} has no data in {y0}-{y1}")
+    if max_values is None:
+        max_values = _DEFAULT_MAX_REQUEST_VALUES
+
+    n_time = int(window.sizes["time"])
+    steps = _steps_per_chunk(window, variable, max_years, max_values)
+    chunks = []
+    for start in range(0, n_time, steps):
+        piece = window.isel(time=slice(start, start + steps))
+        stamps = pd.DatetimeIndex(piece["time"].values)
+        span = f"{stamps.year.min()}-{stamps.year.max()}"
+        if verbose:
+            print(f"[acmaddl:opendap] loading {span} "
+                  f"({piece.sizes['time']} step(s) from {str(stamps[0])[:7]})")
+        piece = piece.load()
+        _reject_degenerate(piece, variable, f"{label} ({span})")
+        chunks.append(piece)
     return xr.concat(chunks, dim="time") if len(chunks) > 1 else chunks[0]
 
 
@@ -204,6 +253,8 @@ class OPeNDAPAdapter(AdapterBase):
                 ds = ds.sel(year=slice(y0, y1))
             elif "time" in ds.coords:
                 obs_years = (y0, y1)
+        lon_segments = None
+        obs_lon_name = None
         if region:
             lat_s, lat_n, lon_w, lon_e = region
             lat_name = "Y" if "Y" in ds.dims else "lat"
@@ -216,13 +267,44 @@ class OPeNDAPAdapter(AdapterBase):
             # wrap-safe; a naive slice(lon_w, lon_e) silently under-selects when the
             # request and the source disagree on convention. See normalize.select_lon.
             ds = ds.sel({lat_name: slice(lat_s, lat_n)})
-            ds = select_lon(ds, lon_w, lon_e, lon_name=lon_name)
+            if obs_years is not None and ds.sizes.get(lon_name, 0):
+                # DEFER the longitude selection for the chunk-loaded obs path.
+                # select_lon answers a seam-crossing box by concatenating two
+                # LAZY slices; over DAP that is one malformed request, which
+                # NOAA PSL answers with a zero-filled array at every size
+                # (probe-verified 2026-09-02 — the same cells load fine as one
+                # contiguous request). Plan the segments here and request each
+                # one separately below.
+                lon_segments = lon_selection_bounds(ds[lon_name].values, lon_w, lon_e)
+                obs_lon_name = lon_name
+            else:
+                ds = select_lon(ds, lon_w, lon_e, lon_name=lon_name)
 
         if obs_years is not None:
             max_years = int(product_config.get(
                 "max_request_years", _DEFAULT_MAX_REQUEST_YEARS))
-            ds = _load_obs_chunks(
-                ds, native_name, obs_years[0], obs_years[1], max_years, verbose, url)
+            chunk_args = (native_name, obs_years[0], obs_years[1], max_years,
+                          verbose, url)
+            if not lon_segments:
+                ds = _load_obs_chunks(ds, *chunk_args)
+            else:
+                # One contiguous DAP request per longitude segment, joined after
+                # loading. A non-seam box has exactly one segment, so this is the
+                # previous behaviour for everything else.
+                parts = []
+                for start, stop in lon_segments:
+                    segment = ds.sel({obs_lon_name: slice(start, stop)})
+                    if segment.sizes.get(obs_lon_name, 0) == 0:
+                        continue
+                    parts.append(_load_obs_chunks(segment, *chunk_args))
+                if not parts:
+                    raise RuntimeError(
+                        f"OPeNDAP: {url} has no cells in longitude "
+                        f"[{lon_w}, {lon_e}] (segments tried: {lon_segments}). "
+                        f"Check the longitude convention of the request."
+                    )
+                ds = (parts[0] if len(parts) == 1
+                      else xr.concat(parts, dim=obs_lon_name))
 
         # Select and average only the target-season lead months when specified.
         # NMME PENTAD_SAMPLES/.MONTHLY uses L = (lead_month - 0.5) half-integer
