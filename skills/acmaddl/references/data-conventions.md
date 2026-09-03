@@ -23,8 +23,15 @@
    | m s-1 | mm/day | × 1000 × 86400 |
    | m | mm/day | × 1000 |
    | m/s | mm/day | × 86,400,000 |
-   | mm/month | mm/day | ÷ 30.0 |
+   | mm/month | mm/day | ÷ 30.0 (**no catalog entry uses this** — see below) |
    | mm | mm/day | identity (already mm per 24 h) |
+
+   The `mm/month → mm/day` row is a flat 30, which no calendar month has, and
+   the result is not recoverable: multiplying back by the real month length
+   lands 3.3% high in January and 6.7% low in February. Every monthly
+   observational precip entry therefore declares `target_units: mm/month` and
+   keeps the source's own totals. Do not reach for this conversion when adding
+   an entry.
 
    Targeted CFSv2 precipitation uses a calendar-aware path: the selected
    `mm/day` lead mean is multiplied by the exact target-season day count and
@@ -47,7 +54,7 @@
 
 - Coordinates: `lat`, `lon` (ascending lat, lon in [-180, 180]); `time` (obs, `datetime64`); `init_time` (forecasts, `datetime64`); `lead_time` (numeric, source-dependent units); `member` (integer ensemble index). With `year_index=True`: integer `year` replaces `init_time`.
 - Typical dims — forecasts: `(init_time, lead_time, member, lat, lon)`; observations: `(time, lat, lon)`; `assemble()` output: `(year, member, lat, lon)`.
-- Units: collapsed targeted seasonal forecasts (`year_index=True`/`assemble`) use precip `mm` across adapter families. Lead-resolved and daily precipitation generally remains `mm/day`; native CHIRPS pentad/dekad/annual products keep `mm` totals, and `obs/tamsat` / `obs/gpcc-*` keep `mm/month`. Temp is `C`; sst is mostly `K` (ERA5 sst is `C`); `pev` is `mm/day`.
+- Units: collapsed targeted seasonal forecasts (`year_index=True`/`assemble`) use precip `mm` across adapter families. Lead-resolved and daily precipitation generally remains `mm/day`; native CHIRPS pentad/dekad/annual products keep `mm` totals, and every monthly observational precip product — `obs/chirps-v2-monthly`, `obs/chirps-v3-monthly`, `obs/chirps-v3-monthly-prelim`, `obs/tamsat`, `obs/gpcc-*` — keeps `mm/month`. Temp is `C`; sst is mostly `K` (ERA5 sst is `C`); `pev` is `mm/day`.
 
   **The `mm` seasonal-total contract is a FORECAST contract.** It lives in the `year_index` branch (step 14), which is gated on `init_time` being a dim — observations have none, so it never fires for them. An observational fetch with `seasonal="mean"` returns the **mean** of the season's months in the entry's own `target_units`, never a seasonal total: `obs/cmap` JAS 2015 over the Sahel is ~4.7 `mm/day`, where the same season as a total would be ~436 `mm`. Multiply by the season's day count (or its month count, for a `mm/month` product) before comparing an obs field against an `assemble()` forecast.
 

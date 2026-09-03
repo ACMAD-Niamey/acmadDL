@@ -85,10 +85,20 @@ def test_period_cadences_are_not_relabelled_as_daily_rate():
         assert v["target_units"] != "mm/day", f"{prod} must not claim a daily rate"
 
 
-def test_monthly_converts_to_daily_rate():
-    for prod in ["obs/chirps-v2-monthly", "obs/chirps-v3-monthly"]:
+def test_monthly_totals_are_kept_as_mm_per_month():
+    """Follows obs/tamsat and obs/gpcc-*: monthly totals are not divided into a rate.
+
+    The ("mm/month", "mm/day") conversion in normalize divides by a flat 30, which
+    no calendar month has, so the result is neither a true daily rate nor
+    recoverable: a consumer multiplying back by the real month length lands 3.3%
+    high in January and 6.7% low in February. Keeping the source's own totals
+    makes the delivered contract uniform across every monthly obs precip product.
+    """
+    for prod in ["obs/chirps-v2-monthly", "obs/chirps-v3-monthly",
+                 "obs/chirps-v3-monthly-prelim"]:
         v = catalog.info(prod)["variables"]["precip"]
-        assert v["units"] == "mm/month" and v["target_units"] == "mm/day"
+        assert v["units"] == "mm/month", prod
+        assert v["target_units"] == "mm/month", prod
 
 
 def test_v3_daily_rhiza_documents_coverage_floor():

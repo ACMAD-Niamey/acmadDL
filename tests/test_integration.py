@@ -204,8 +204,8 @@ def test_fetch_nmme_geoss2s_temp():
 # so they're light. The Sheerwater mirror routing is covered (mocked) by
 # tests/test_sheerwater_catalog.py.
 _CHIRPS_NATIVE_RASTER = [
-    pytest.param("obs/chirps-v3-monthly", dict(hindcast=(2020, 2020), region=REGION), "mm/day", id="v3-monthly"),
-    pytest.param("obs/chirps-v2-monthly", dict(hindcast=(2020, 2020), region=REGION), "mm/day", id="v2-monthly"),
+    pytest.param("obs/chirps-v3-monthly", dict(hindcast=(2020, 2020), region=REGION), "mm/month", id="v3-monthly"),
+    pytest.param("obs/chirps-v2-monthly", dict(hindcast=(2020, 2020), region=REGION), "mm/month", id="v2-monthly"),
     pytest.param("obs/chirps-v3-annual", dict(hindcast=(2020, 2020), region=REGION), "mm", id="v3-annual"),
     pytest.param("obs/chirps-v2-annual", dict(hindcast=(2020, 2020), region=REGION), "mm", id="v2-annual"),
 ]
