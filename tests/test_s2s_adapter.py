@@ -128,6 +128,47 @@ def test_s2s_request_honors_explicit_leadtime_override(monkeypatch):
     assert request["leadtime_hour"] == ["24", "48", "72"]
 
 
+def test_s2s_per_variable_leadtime_beats_product_default(monkeypatch):
+    """A variable-level leadtime_hour wins over the product-level default.
+
+    sst is instantaneous: ECDS silently returns only step 24 for the MARS range
+    shorthand that the accumulated variables require, so the catalog gives sst an
+    explicit list. Regression guard — the failure mode is silent short data, not
+    an error.
+    """
+    fake = _FakeCDSClient()
+    monkeypatch.setattr("cdsapi.Client", lambda *a, **kw: fake)
+
+    adapter = CDSAdapter()
+    config = _s2s_product_config()
+    config["variables"]["sst"] = {
+        "native_name": "sea_surface_temperature",
+        "units": "K",
+        "leadtime_hour": ["0_24", "24_48"],
+    }
+    config["_init_date"] = "2026-05-12"
+    adapter.fetch_data(config, "sst", region=[-2, 2, 36, 40])
+
+    _, request, _ = fake.calls[0]
+    assert request["leadtime_hour"] == ["0_24", "24_48"]
+
+    # ...and the accumulated variable in the same product keeps the shorthand.
+    fake.calls.clear()
+    adapter.fetch_data(config, "precip", region=[-2, 2, 36, 40])
+    _, request, _ = fake.calls[0]
+    assert request["leadtime_hour"] == ["0/to/1104/by/24"]
+
+
+def test_s2s_catalog_sst_enumerates_all_46_leads():
+    """The shipped catalog gives c3s/ecmwf-s2s sst the full explicit lead list."""
+    from acmaddl.catalog import info
+
+    sst = info("c3s/ecmwf-s2s")["variables"]["sst"]
+    assert len(sst["leadtime_hour"]) == 46
+    assert sst["leadtime_hour"][0] == "0_24"
+    assert sst["leadtime_hour"][-1] == "1080_1104"
+
+
 def test_s2s_client_uses_url_override_when_present(monkeypatch):
     """If cds_url is set in product config, cdsapi.Client receives it."""
     captured = {}

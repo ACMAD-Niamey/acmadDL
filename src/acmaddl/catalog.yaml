@@ -1285,6 +1285,17 @@ c3s/ecmwf-s2s:
       native_name: sea_surface_temperature
       units: K
       target_units: K
+      # Instantaneous field: ECDS silently returns only step 24 for the MARS
+      # range shorthand the accumulated variables use, so the 24h periods are
+      # enumerated explicitly here. See adapters/cds.py for the full note.
+      leadtime_hour: ["0_24", "24_48", "48_72", "72_96", "96_120", "120_144",
+        "144_168", "168_192", "192_216", "216_240", "240_264", "264_288",
+        "288_312", "312_336", "336_360", "360_384", "384_408", "408_432",
+        "432_456", "456_480", "480_504", "504_528", "528_552", "552_576",
+        "576_600", "600_624", "624_648", "648_672", "672_696", "696_720",
+        "720_744", "744_768", "768_792", "792_816", "816_840", "840_864",
+        "864_888", "888_912", "912_936", "936_960", "960_984", "984_1008",
+        "1008_1032", "1032_1056", "1056_1080", "1080_1104"]
   grid:
     lat_res: 1.5
     lon_res: 1.5
