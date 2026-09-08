@@ -1305,6 +1305,35 @@ c3s/ecmwf-s2s:
   # Hindcast availability depends on the issuance date — ECMWF S2S provides
   # on-the-fly reforecasts for the same calendar week, not a static range.
 
+obs/oisst-v2-daily:
+  adapter: opendap
+  # NOAA PSL THREDDS. OISST v2.1 ("NCEI Optimal Interpolation SST"): 0.25 deg
+  # daily blended analysis, the reference observation for sub-seasonal SST
+  # verification. Filed ONE FILE PER YEAR -- sst.day.mean.YYYY.nc -- with no
+  # THREDDS aggregation endpoint (probed 2026-09-04: the obvious
+  # /Aggregations/ path is a 404), so url_template carries a {year} placeholder
+  # and the adapter opens one file per requested year and concatenates on time.
+  source_url: "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
+  url_template: "{base}/sst.day.mean.{year}.nc"
+  decode_times: true      # ordinary "days since 1800-01-01"
+  variables:
+    sst:
+      native_name: sst
+      units: degC        # as the file declares it
+      target_units: C    # acmaddl's canonical Celsius label
+  grid:
+    lat_res: 0.25
+    lon_res: 0.25
+    hindcast_range: [1981, 2026]
+    temporal: daily
+  notes: >-
+    NOAA OISST v2.1, 0.25 deg daily, 1981-09-01 to present, on a 0.25 deg global
+    grid (lat -89.875..89.875, lon 0.125..359.875, 0-360 convention). The
+    verification and regression target for sub-seasonal SST work -- obs/ersst-v5
+    is 2 deg MONTHLY and cannot verify a weekly lead. Each year is region-sliced
+    before loading, so request only the box you need: the global daily grid is
+    720x1440x365 per year.
+
 obs/ersst-v5:
   adapter: opendap
   # NOAA PSL THREDDS. One NetCDF per variable, served whole — no Ingrid variable

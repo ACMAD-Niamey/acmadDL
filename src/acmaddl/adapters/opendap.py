@@ -13,9 +13,20 @@ from ._robust import (_DEFAULT_MAX_RETRIES, _DEFAULT_RETRY_BACKOFF, _with_retry,
 _DEFAULT_URL_TEMPLATE = "{base}/.{native_name}/dods"
 
 
-def _build_url(product_config, native_name, base):
+def _build_url(product_config, native_name, base, year=None):
     template = product_config.get("url_template", _DEFAULT_URL_TEMPLATE)
-    return template.format(base=base, native_name=native_name)
+    return template.format(base=base, native_name=native_name, year=year)
+
+
+def _is_per_year(product_config):
+    """True when the catalog serves one file per calendar year.
+
+    NOAA PSL files high-resolution daily products this way (one
+    ``sst.day.mean.YYYY.nc`` per year) rather than as a single aggregate, and
+    THREDDS exposes no aggregation endpoint for them. Such an entry carries a
+    ``{year}`` placeholder in its ``url_template``.
+    """
+    return "{year}" in product_config.get("url_template", _DEFAULT_URL_TEMPLATE)
 
 
 def _sort_ascending(ds, *coords):
@@ -35,6 +46,12 @@ def _sort_ascending(ds, *coords):
 # 30 years of 0 degC, land mask and all. Requesting in chunks keeps each
 # response under any plausible cap; `_reject_degenerate` catches the rest.
 _DEFAULT_MAX_REQUEST_YEARS = 5
+
+# Per-year daily products (OISST 0.25 deg) blow the same DAP response cap one
+# axis down: a single year of a modest box is ~50 MB, which comes back as a
+# "NetCDF: DAP failure". Load in day blocks instead. 90 days of a 15x30 deg box
+# at 0.25 deg is a few MB -- comfortably under any plausible cap.
+_DEFAULT_MAX_REQUEST_DAYS = 90
 
 
 def _reject_degenerate(ds, variable, label):
@@ -138,7 +155,86 @@ class OPeNDAPAdapter(AdapterBase):
                 combined = combined.isel(S=np.sort(unique_idx))
         return combined
 
+    def _fetch_per_year(self, product_config, variable, date_range, region):
+        """Open one file per calendar year and concatenate along time.
+
+        Each year is region-sliced *before* loading, so a DAP request carries only
+        the requested box rather than the global grid — at 0.25 deg daily the
+        difference is several GB per year versus a few MB.
+        """
+        verbose = product_config.get("_verbose", True)
+        max_retries = int(product_config.get("_max_retries", _DEFAULT_MAX_RETRIES))
+        retry_backoff = float(product_config.get("_retry_backoff", _DEFAULT_RETRY_BACKOFF))
+        var_cfg = product_config["variables"][variable]
+        native_name = var_cfg["native_name"]
+        base = product_config["source_url"].rstrip("/")
+
+        if not date_range:
+            raise ValueError(
+                f"{product_config.get('_product_name', 'product')} is filed one "
+                "file per year; fetch requires a date_range to know which years "
+                "to open.")
+        y0, y1 = date_range
+        decode_times = bool(product_config.get("decode_times", True))
+
+        pieces, missing = [], []
+        for year in range(int(y0), int(y1) + 1):
+            url = _build_url(product_config, native_name, base, year=year)
+            try:
+                ds = _with_retry(
+                    lambda u=url: xr.open_dataset(u, engine="netcdf4",
+                                                  decode_times=decode_times),
+                    max_retries, retry_backoff,
+                    label=f"OPeNDAP open {url}", verbose=verbose,
+                )
+            except Exception:
+                # A year the provider has not published yet (or has retired) must
+                # not sink the whole request — the caller gets the years that do
+                # exist, and the gap is reported.
+                missing.append(year)
+                if verbose:
+                    print(f"[acmaddl:opendap] year {year} unavailable, skipping")
+                continue
+            if region:
+                lat_s, lat_n, lon_w, lon_e = region
+                lat_name = "Y" if "Y" in ds.dims else "lat"
+                lon_name = "X" if "X" in ds.dims else "lon"
+                ds = _sort_ascending(ds, lat_name, lon_name)
+                ds = ds.sel({lat_name: slice(lat_s, lat_n)})
+                ds = select_lon(ds, lon_w, lon_e, lon_name=lon_name)
+            # A whole year of a 0.25 deg daily box overruns the DAP response cap
+            # (netCDF4 raises "NetCDF: DAP failure"), so load in day blocks. Same
+            # hazard `max_request_years` guards for the aggregated products, one
+            # axis down: there the unit is years of 2 deg monthly, here days of
+            # 0.25 deg daily.
+            block = int(product_config.get("max_request_days", _DEFAULT_MAX_REQUEST_DAYS))
+            n_time = ds.sizes.get("time", 0)
+            if verbose:
+                print(f"[acmaddl:opendap] loading {year} "
+                      f"({n_time} steps in blocks of {block})")
+            blocks = []
+            for start in range(0, n_time, block):
+                piece = ds.isel(time=slice(start, min(start + block, n_time))).load()
+                _reject_degenerate(piece, native_name, f"{url} ({year} +{start})")
+                blocks.append(piece)
+            if not blocks:
+                missing.append(year)
+                continue
+            pieces.append(xr.concat(blocks, dim="time") if len(blocks) > 1 else blocks[0])
+
+        if not pieces:
+            raise RuntimeError(
+                f"OPeNDAP: no data for any year in {y0}-{y1} "
+                f"(tried {y1 - y0 + 1} files under {base})")
+        if missing and verbose:
+            print(f"[acmaddl:opendap] {len(pieces)} of {y1 - y0 + 1} years "
+                  f"loaded; missing: {missing}")
+        combined = xr.concat(pieces, dim="time") if len(pieces) > 1 else pieces[0]
+        return combined.sortby("time")
+
     def _fetch_one_stream(self, product_config, variable, stream, date_range, region):
+        if _is_per_year(product_config):
+            return self._fetch_per_year(product_config, variable, date_range, region)
         verbose = product_config.get("_verbose", True)
         max_retries = int(product_config.get("_max_retries", _DEFAULT_MAX_RETRIES))
         retry_backoff = float(product_config.get("_retry_backoff", _DEFAULT_RETRY_BACKOFF))
