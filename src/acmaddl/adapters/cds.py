@@ -111,9 +111,24 @@ class CDSAdapter(AdapterBase):
             request["time"] = product_config.get("forecast_time", "00:00")
             if "cds_model" in product_config:
                 request["origin"] = product_config["cds_model"]
-            request["leadtime_hour"] = [
-                str(h) for h in product_config.get("leadtime_hour", ["0/to/1104/by/24"])
-            ]
+            # Leadtime spec, most specific first: per-variable, then per-product,
+            # then the MARS range shorthand.
+            #
+            # The two forms are NOT interchangeable, and each fails on the other's
+            # variables (verified 2026-09-04 against s2s-forecasts, init 2026-08-31):
+            #   * Accumulated fields (precip) need the shorthand "0/to/1104/by/24".
+            #     Passing explicit "0_24"-style periods makes MARS return no data
+            #     at all (MarsNoDataError).
+            #   * Instantaneous fields (sst) need the explicit list. With the
+            #     shorthand ECDS silently returns only step 24 — one lead instead
+            #     of 46, no error — so it presents as missing data rather than a
+            #     malformed request.
+            # Hence the per-variable override, set on sst in the catalog.
+            leadtime = var_cfg.get(
+                "leadtime_hour",
+                product_config.get("leadtime_hour", ["0/to/1104/by/24"]),
+            )
+            request["leadtime_hour"] = [str(h) for h in leadtime]
             # level_type is required by ECDS — without it the MARS request lands
             # in a test partition (marsth-ecmwf) with no data, producing
             # MarsNoDataError. Surface variables use "single_level"; pressure
