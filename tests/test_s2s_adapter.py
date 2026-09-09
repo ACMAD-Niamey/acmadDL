@@ -370,3 +370,39 @@ def test_normalize_preserves_other_s2s_dims():
     assert "lon" in out.dims
     assert set(out["precip"].dims) >= {"year", "member", "lead_time", "lat", "lon"}
 
+
+
+def test_s2s_reforecast_pins_hyear_from_date_range(monkeypatch):
+    """The training period must not be an unpinned ECDS default.
+
+    Without hyear/hmonth/hday the collection happens to return the full suite, so
+    the omission is invisible -- until the server-side default changes and every
+    downstream calibration is silently fitted on a different set of years.
+    """
+    fake = _FakeCDSClient()
+    monkeypatch.setattr("cdsapi.Client", lambda *a, **kw: fake)
+
+    adapter = CDSAdapter()
+    config = _s2s_product_config()
+    config["_init_date"] = "2026-08-31"
+    config["_reforecast"] = True
+    adapter.fetch_data(config, "precip", date_range=(2006, 2025), region=[-2, 2, 36, 40])
+
+    dataset, request, _ = fake.calls[0]
+    assert dataset == "s2s-reforecasts"
+    assert request["hyear"] == [str(y) for y in range(2006, 2026)]
+    assert request["hmonth"] == "08"
+    assert request["hday"] == "31"
+    # the real-time issuance date is still the forecast date, not a hindcast one
+    assert (request["year"], request["month"], request["day"]) == ("2026", "08", "31")
+
+
+def test_s2s_realtime_does_not_send_hyear(monkeypatch):
+    fake = _FakeCDSClient()
+    monkeypatch.setattr("cdsapi.Client", lambda *a, **kw: fake)
+    adapter = CDSAdapter()
+    config = _s2s_product_config()
+    config["_init_date"] = "2026-08-31"
+    adapter.fetch_data(config, "precip", date_range=(2026, 2026), region=[-2, 2, 36, 40])
+    _, request, _ = fake.calls[0]
+    assert "hyear" not in request
