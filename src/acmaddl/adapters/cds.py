@@ -104,6 +104,19 @@ class CDSAdapter(AdapterBase):
                 request["forecast_type"] = product_config.get(
                     "reforecast_type", "perturbed_reforecast"
                 )
+                # Pin the hindcast years rather than trusting the ECDS default.
+                # Without hyear/hmonth/hday the collection happens to return the
+                # full ~20-year suite, so this looked fine -- but the training
+                # period of every downstream calibration was then an unpinned
+                # dependency on a server-side default that could change silently
+                # and would only show up as a different number of `year` values.
+                # date_range is resolved upstream in fetch() from the init year
+                # (init_year-20 .. init_year-1) or from an explicit hindcast=.
+                if date_range:
+                    y0, y1 = int(date_range[0]), int(date_range[1])
+                    request["hyear"] = [str(y) for y in range(y0, y1 + 1)]
+                    request["hmonth"] = m
+                    request["hday"] = d
             else:
                 request["forecast_type"] = product_config.get(
                     "forecast_type", "perturbed_forecast"
