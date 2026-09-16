@@ -532,3 +532,86 @@ def test_extreme_but_real_cold_still_passes():
                              {"grid": {"hindcast_range": [1940, 2026]},
                               "variables": {"temp": {}}})
     assert checks["value_range"]["passed"], checks["value_range"]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# usable(): the one-line "is this returned field real data?" guard
+# ---------------------------------------------------------------------------
+
+from acmaddl import usable  # noqa: E402
+from acmaddl.validate import usable as usable_from_module  # noqa: E402
+
+
+def _da(values, units=None):
+    da = xr.DataArray(np.asarray(values, dtype=float), dims=("lat", "lon"))
+    if units:
+        da.attrs["units"] = units
+    return da
+
+
+class TestUsable:
+    def test_is_exported_at_top_level(self):
+        assert usable is usable_from_module
+
+    def test_all_fill_is_not_usable(self):
+        assert usable(_da(np.full((3, 4), 1e20))) is False
+
+    def test_all_nan_is_not_usable(self):
+        assert usable(_da(np.full((3, 4), np.nan))) is False
+
+    def test_all_zero_is_not_usable(self):
+        assert usable(_da(np.zeros((3, 4)))) is False
+
+    def test_fill_mixed_with_real_values_is_usable(self):
+        values = np.full((3, 4), 1e20)
+        values[1, 1:3] = [2.5, 4.0]
+        assert usable(_da(values)) is True
+
+    def test_plain_numpy_input(self):
+        assert usable(np.array([0.0, 1.0, 2.0])) is True
+
+    def test_absurd_finite_value_below_fill_is_rejected(self):
+        # 1e6 is finite and under the fill threshold, but no rainfall is 1e6 mm.
+        assert usable(_da([[1e6, 2.0], [3.0, 4.0]])) is False
+
+    def test_a_few_extreme_cells_are_tolerated_but_a_corrupt_field_is_not(self):
+        # A wet model tops the seasonal ceiling at a handful of ITCZ cells: real data.
+        values = np.full((50, 50), 300.0)
+        values[0, 0] = 5200.0                       # 1 of 2500 cells = 0.04 %
+        assert usable(_da(values, units="mm"), variable="precip") is True
+        assert usable(_da(values, units="mm"), variable="precip", tolerance=0) is False
+        values[:10, :] = 5200.0                     # 20 % absurd: corruption
+        assert usable(_da(values, units="mm"), variable="precip") is False
+
+    def test_explicit_limit_wins(self):
+        da = _da([[10.0, 20.0], [30.0, 40.0]])
+        assert usable(da, limit=25.0) is False
+        assert usable(da, limit=50.0) is True
+
+    def test_precip_units_from_attrs_select_the_ceiling(self):
+        monthly = _da([[100.0, 2500.0], [5.0, 40.0]], units="mm/month")
+        assert usable(monthly, variable="precip") is True
+        daily = _da([[100.0, 2500.0], [5.0, 40.0]], units="mm/day")
+        assert usable(daily, variable="precip") is False      # 2500 mm/day is not rain
+        assert usable(daily, variable="precip", units="mm") is True  # explicit override
+
+    def test_precip_with_unknown_units_uses_the_permissive_ceiling(self):
+        # A seasonal total without a units attribute must not be judged as a rate.
+        assert usable(_da([[800.0, 1900.0], [5.0, 40.0]]), variable="precip") is True
+        assert usable(_da([[800.0, 9000.0], [5.0, 40.0]]), variable="precip") is False
+
+    def test_negative_precipitation_is_rejected(self):
+        assert usable(_da([[-30.0, 2.0], [3.0, 4.0]]), variable="precip") is False
+
+    def test_temperature_uses_its_own_range(self):
+        assert usable(_da([[-20.0, 35.0], [10.0, 22.0]]), variable="temp") is True
+        assert usable(_da([[-20.0, 350.0], [10.0, 22.0]]), variable="temp") is False
+
+    def test_custom_fill_threshold(self):
+        da = _da([[-999.0, 2.0], [3.0, 4.0]])
+        assert usable(da, fill=999.0) is True        # -999 treated as fill
+        assert usable(da, variable="precip") is False  # otherwise -999 mm is a sign bug
+
+    def test_dataset_input_is_a_type_error(self):
+        with pytest.raises(TypeError):
+            usable(xr.Dataset({"precip": _da([[1.0]])}))

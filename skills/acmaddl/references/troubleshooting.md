@@ -59,6 +59,8 @@ acmadDL now ships a guard (`reject_if_degenerate` / `DegenerateResponseError`) t
 
 If you suspect a poisoned entry from before you enabled the guard, purge it with `acmaddl cache clear --product X` and re-fetch with `degenerate_attempts>1`. Independent of the guard, sanity-check any large remote pull (non-zero variance, expected land/ocean mask) before trusting it.
 
+The guard protects the *cache*; the complementary per-field check for a *workflow* is `acmaddl.usable(field, variable=...)` (see api.md): it strips fill and non-finite cells and reports whether what remains is non-empty, not all zero, and physically plausible (unit-aware, with a 0.1 % outlier tolerance). Run it on every model's `(hindcast, forecast)` before calibration — CCSR has served all-fill precipitation for whole targets, and which model does so changes month to month — and drop a failing model with a printed reason.
+
 ## Cache issues
 
 - Cache root: `~/.nuthatch/caches` (override with `ACMADDL_CACHE_DIR` **before importing acmaddl**; power users: `NUTHATCH_ROOT_FILESYSTEM` / `NUTHATCH_LOCAL_FILESYSTEM`, which acmaddl only `setdefault`s). Scratch downloads: `~/.nuthatch/acmaddl/_tmp` (`ACMADDL_TMP_DIR`) — deliberately not the system tempdir, because macOS reaps `/var/folders/.../T/` and breaks pickled lazy datasets.

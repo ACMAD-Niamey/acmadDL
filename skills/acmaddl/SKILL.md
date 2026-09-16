@@ -190,6 +190,8 @@ check_product("nmme/cfsv2")                  # config-level check
 check_product("obs/era5", probe_remote=True) # also pings the live source
 ```
 
+A product can also be *alive* and still return a corrupt field (all fill, all zero, absurd values). `usable(field, variable="precip")` is the per-field guard for that — run it on each model's `(hindcast, forecast)` before calibration and drop the model with a stated reason. Unit-aware via the field's `units` attr; `limit=`/`fill=` override. Full contract: [references/api.md](references/api.md).
+
 ## Credentials you may need
 
 | Products | Credential | Notes |

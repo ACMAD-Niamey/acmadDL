@@ -92,6 +92,60 @@ _RANGE_SLACK = {"precip": 1.0, "pev": 1.0}
 _DEFAULT_RANGE_SLACK = 50.0
 
 
+def usable(field, *, variable=None, units=None, limit=None, fill=1e10,
+           tolerance=1e-3):
+    """True when a returned field still carries physically usable values.
+
+    A provider can answer a request with a field that is structurally fine but
+    empty in substance: every cell a fill value, every cell zero, or a handful
+    of absurd numbers. ``usable`` is the one-line check a workflow runs on
+    each model before letting it into a calibration, so a corrupt field is
+    dropped with a stated reason instead of poisoning the ensemble.
+
+    Cells that are non-finite or fill (``abs(x) >= fill``; fill is legitimate
+    over ocean/land edges) are discarded first. What remains must be non-empty,
+    not all zero, and plausible:
+
+    * ``limit`` given: ``abs(x) <= limit`` for every remaining cell.
+    * ``variable`` given (``precip``/``temp``/``sst``/``pev``): the same
+      unit-aware ranges ``check_structure`` applies. ``units`` defaults to the
+      field's ``units`` attribute; precipitation with unknown units is judged
+      against the most permissive ceiling (5000 mm, a seasonal total) rather
+      than the daily-rate one, so a missing attribute never rejects real data.
+    * neither: ``abs(x) <= 5000``.
+
+    ``tolerance`` is the fraction of remaining cells allowed outside the range
+    (default 0.1 %). A wet model's handful of extreme ITCZ cells is not
+    corruption — GEOSS2S legitimately tops 5000 mm in a season at a few
+    points — whereas a field that is a quarter absurd values is. Pass ``0`` for
+    the strict every-cell rule.
+
+    Accepts an ``xr.DataArray`` or anything ``np.asarray`` takes. Returns a
+    plain bool and never raises on bad data — a ``False`` is the answer.
+    """
+    if isinstance(field, xr.Dataset):
+        raise TypeError("usable() takes a DataArray or array, not a Dataset; "
+                        "pass ds[variable]")
+    if units is None and hasattr(field, "attrs"):
+        units = field.attrs.get("units")
+    values = np.asarray(getattr(field, "values", field), dtype=float)
+    real = values[np.isfinite(values) & (np.abs(values) < fill)]
+    if real.size == 0 or not np.any(real != 0.0):
+        return False
+    if limit is not None:
+        lo, hi = -float(limit), float(limit)
+    elif variable is None or variable not in _VALUE_RANGES:
+        lo, hi = -5000.0, 5000.0
+    else:
+        lo, hi = _VALUE_RANGES[variable]
+        if variable == "precip":
+            hi = {"mm/day": 500.0, "mm/month": 3000.0}.get(units, 5000.0)
+        slack = _RANGE_SLACK.get(variable, _DEFAULT_RANGE_SLACK)
+        lo, hi = lo - slack, hi + slack
+    outside = np.mean((real < lo) | (real > hi))
+    return bool(outside <= tolerance)
+
+
 def check_structure(ds, product, variable, product_config=None):
     """Run structural sanity checks on a fetched dataset.
 

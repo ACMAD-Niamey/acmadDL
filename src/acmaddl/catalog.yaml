@@ -483,6 +483,36 @@ c3s/jma:
     hindcast_range: [1991, 2020]   # JMA CPS3 (C3S system 3) native reforecast
     forecast_range: [2022, 2026]   # RETIRED — CPS3 superseded by CPS4 (~Jan 2026)
 
+c3s/jma-cps4:
+  adapter: cds
+  cds_dataset: "seasonal-monthly-single-levels"
+  cds_model: "jma"
+  system: "4"
+  product_type: "monthly_mean"
+  leadtime_month: [1, 2, 3, 4, 5, 6]
+  variables:
+    precip:
+      native_name: total_precipitation
+      short_name: tprate
+      units: "m s-1"
+      target_units: "mm/day"
+    temp:
+      native_name: 2m_temperature
+      short_name: t2m
+      units: K
+      target_units: C
+    sst:
+      native_name: sea_surface_temperature
+      units: K
+      target_units: K
+  grid:
+    lat_res: 1.25
+    lon_res: 1.25
+    forecast_members: 155  # CPS4 keeps CPS3's lagged burst ensemble — verified live 2026-09-15 (Aug 2026 forecast: member=155)
+    hindcast_members: 10   # verified live 2026-09-15 (1993-2020 reforecast: member=10)
+    hindcast_range: [1993, 2020]   # CDS constraints for system 4 (verified 2026-09-15)
+    forecast_range: [2026, null]   # real-time from 2026; CPS4 superseded CPS3 ~Jan 2026
+
 # Older system versions (match IRI Data Library versions)
 
 c3s/jma-cps2:
