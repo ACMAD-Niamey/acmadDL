@@ -108,8 +108,8 @@ nmme/ccsm4:
   variables:
     precip:
       native_name: pr
-      units: mm
-      target_units: mm
+      units: "mm/day"
+      target_units: "mm/day"   # rate per step; year_index=True delivers calendar-weighted mm totals (see #6)
     temp:
       native_name: tas
       # CCSR serves NMME 2 m temperature already in Celsius (declared
@@ -142,8 +142,8 @@ nmme/cesm1:
   variables:
     precip:
       native_name: pr
-      units: mm
-      target_units: mm
+      units: "mm/day"
+      target_units: "mm/day"   # rate per step; year_index=True delivers calendar-weighted mm totals (see #6)
     temp:
       native_name: tas
       # CCSR serves NMME 2 m temperature already in Celsius (declared
@@ -175,8 +175,8 @@ nmme/geoss2s:
   variables:
     precip:
       native_name: pr
-      units: mm
-      target_units: mm
+      units: "mm/day"
+      target_units: "mm/day"   # rate per step; year_index=True delivers calendar-weighted mm totals (see #6)
     temp:
       native_name: tas
       # CCSR serves NMME 2 m temperature already in Celsius (declared
@@ -1460,8 +1460,8 @@ nmme/spear:
       native_name: pr
       # CCSR serves monthly-TOTAL precip (mm/month), not a daily rate — verified
       # 2026-06-04 via metadata (units attr "mm") + magnitude (EA MAM mean ~87 mm).
-      units: "mm"
-      target_units: "mm"
+      units: "mm/day"
+      target_units: "mm/day"   # rate per step; year_index=True delivers calendar-weighted mm totals (see #6)
     temp:
       native_name: tas
       # CCSR serves NMME 2 m temperature already in Celsius (declared
@@ -1535,8 +1535,8 @@ nmme/cansipsic4:
       # fresh data readable either way.
       # CCSR serves monthly-TOTAL precip (mm/month), not a daily rate — verified
       # 2026-06-04 via metadata (units attr "mm") + magnitude (EA MAM mean ~87 mm).
-      units: "mm"
-      target_units: "mm"
+      units: "mm/day"
+      target_units: "mm/day"   # rate per step; year_index=True delivers calendar-weighted mm totals (see #6)
     temp:
       native_name: tas
       # CCSR serves NMME 2 m temperature already in Celsius (declared

@@ -1,4 +1,5 @@
 import fnmatch
+import warnings
 import gzip
 import os
 import re
@@ -91,7 +92,7 @@ def _list_directory(url):
     return [os.path.basename(h) for h in re.findall(r'href="([^"]+)"', html)]
 
 
-def _resolve_wildcards(base, entries, list_dir=None):
+def _resolve_wildcards(base, entries, list_dir=None, allow_partial=False):
     """Resolve a ``*`` in each enumerated relative path against the server.
 
     NCEI stamps its GPCP filenames with the processing date
@@ -101,9 +102,12 @@ def _resolve_wildcards(base, entries, list_dir=None):
 
     Several matches means the month was reprocessed; the lexically greatest name
     wins, which for a fixed-width ``_c<YYYYMMDD>`` suffix is the most recent
-    reprocessing. No match raises rather than skipping the month: a silently
+    reprocessing. No match raises rather than skipping the month — a silently
     dropped file is indistinguishable downstream from data the source never
-    published.
+    published — unless the caller opted into best-effort fetching with
+    ``allow_partial``, in which case the month is skipped with a warning, the
+    same contract per-file download failures honour. That is the in-progress
+    year on NCEI: the listing stops at the last processed month.
 
     The match is a plain fnmatch against the pattern, so a sibling stream in the
     same directory is excluded by the literal part of the name — NCEI keeps
@@ -124,10 +128,12 @@ def _resolve_wildcards(base, entries, list_dir=None):
             listings[dir_url] = list_dir(dir_url)
         hits = sorted(n for n in listings[dir_url] if fnmatch.fnmatch(n, namepat))
         if not hits:
-            raise FileNotFoundError(
-                f"no file matching {namepat!r} in {dir_url} "
-                f"({len(listings[dir_url])} name(s) listed)"
-            )
+            msg = (f"no file matching {namepat!r} in {dir_url} "
+                   f"({len(listings[dir_url])} name(s) listed)")
+            if not allow_partial:
+                raise FileNotFoundError(msg)
+            warnings.warn(f"skipping (allow_partial=True): {msg}", stacklevel=2)
+            continue
         resolved.append((f"{dirpart}/{hits[-1]}" if dirpart else hits[-1], stamp))
     return resolved
 
@@ -393,7 +399,7 @@ class HTTPAdapter(AdapterBase):
         # A `*` in the pattern means the filename carries something unpredictable
         # (NCEI's processing-date suffix), so ask the server what it actually has.
         if "*" in file_pattern:
-            entries = _resolve_wildcards(base_url, entries)
+            entries = _resolve_wildcards(base_url, entries, allow_partial=allow_partial)
         base = base_url.rstrip("/")
         urls = [f"{base}/{f}" for f, _ in entries]
         stamps = [ts for _, ts in entries]

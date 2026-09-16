@@ -328,3 +328,59 @@ def test_the_region_crop_survives_a_real_download(tmp_path, serve_file):
         _config(file_pattern="{year}/rfe{year}_{month:02d}.v3.1.nc"),
         "precip", date_range=(2024, 2024), region=[8, 18, -8, 8])
     assert float(out["lat"].min()) >= 7.0 and float(out["lat"].max()) <= 19.0
+
+
+# ── An in-progress year under allow_partial ─────────────────────────────────
+# NCEI processes GPCP with a lag of a few months, so the current year's listing
+# stops before December. Strict mode must still raise (a silently dropped file
+# is indistinguishable from data the source never published), but a caller who
+# opted into best-effort fetching gets the processed months, with a warning per
+# skipped one — the same contract per-file download failures already honour.
+
+GPCP_2026_PARTIAL = [
+    "gpcp_v02r03_monthly_d202601_c20260407.nc",
+    "gpcp_v02r03_monthly_d202602_c20260508.nc",
+    "gpcp_v02r03_monthly_d202603_c20260607.nc",
+]
+
+
+def test_a_wildcard_matching_nothing_is_skipped_under_allow_partial():
+    list_dir, _ = _listing({"2026": GPCP_2026_PARTIAL})
+    entries = [(f"2026/gpcp_v02r03_monthly_d2026{m:02d}_*.nc", None) for m in (1, 2, 3, 4)]
+    with pytest.warns(UserWarning, match="d202604"):
+        out = _resolve_wildcards("https://ncei.example.invalid/access", entries,
+                                 list_dir=list_dir, allow_partial=True)
+    assert [name for name, _ in out] == [f"2026/{n}" for n in GPCP_2026_PARTIAL]
+
+
+def test_the_adapter_returns_the_processed_months_of_an_in_progress_year(tmp_path, monkeypatch):
+    """End-to-end through fetch_data with allow_partial: unprocessed months are skipped."""
+    monkeypatch.setattr("acmaddl.adapters.http._list_directory",
+                        lambda url: GPCP_2026_PARTIAL)
+    local = _gpcc_shaped(tmp_path / "gpcp.nc", value=4.0)
+    seen = []
+
+    def fake(url, filename):
+        seen.append(url)
+        shutil.copyfile(local, filename)
+        return filename, None
+    monkeypatch.setattr("acmaddl.adapters.http.urllib.request.urlretrieve", fake)
+
+    cfg = _config(source_url="https://ncei.example.invalid/access",
+                  file_pattern="{year}/gpcp_v02r03_monthly_d{year}{month:02d}_*.nc",
+                  init_months=[1, 2, 3, 4])  # April is not on the server yet
+    cfg["_allow_partial"] = True
+    with pytest.warns(UserWarning, match="d202604"):
+        out = HTTPAdapter().fetch_data(cfg, "precip", date_range=(2026, 2026))
+    assert len(seen) == 3
+    assert out.sizes["time"] == 3
+
+
+def test_an_in_progress_year_with_nothing_processed_still_fails_under_allow_partial(monkeypatch):
+    monkeypatch.setattr("acmaddl.adapters.http._list_directory", lambda url: [])
+    cfg = _config(source_url="https://ncei.example.invalid/access",
+                  file_pattern="{year}/gpcp_v02r03_monthly_d{year}{month:02d}_*.nc")
+    cfg["_allow_partial"] = True
+    with pytest.warns(UserWarning):
+        with pytest.raises(RuntimeError, match="No data files retrieved"):
+            HTTPAdapter().fetch_data(cfg, "precip", date_range=(2026, 2026))
