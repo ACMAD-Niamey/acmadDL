@@ -248,3 +248,30 @@ def test_main_parses_transport(monkeypatch):
     assert seen == {"t": "streamable-http", "host": "127.0.0.1", "port": 9001}
     server.main([])
     assert seen["t"] == "stdio"
+
+
+def test_schemas_carry_field_descriptions_enums_and_outputs():
+    tools = {t.name: t for t in _run(server.mcp.list_tools())}
+    fetch = tools["fetch"]
+    props = fetch.input_schema["properties"]
+    assert all(p.get("description") for p in props.values()), [k for k, p in props.items() if not p.get("description")]
+    assert set(props["variable"]["enum"]) >= {"precip", "temp", "sst"}
+    assert props["boundary"]["enum"] == ["center", "cover"]
+    assert "path" in fetch.output_schema["properties"]
+    assert fetch.annotations.open_world_hint is True and fetch.annotations.read_only_hint is False
+    assert tools["list_products"].annotations.read_only_hint is True
+    assert tools["zonal"].input_schema["properties"]["stat"]["enum"][0] == "mean"
+    for tool in tools.values():
+        assert "Returns:" in tool.description, tool.name
+        assert not tool.description.startswith(" "), tool.name
+
+
+def test_enum_violation_is_rejected_at_the_protocol(fake_fetch):
+    with pytest.raises(ToolError, match="variable"):
+        _run(server.mcp.call_tool("fetch", {"product": "obs/era5", "variable": "rain"}))
+    assert fake_fetch == []
+
+
+def test_unknown_product_suggests_close_matches():
+    with pytest.raises(ToolError, match="Did you mean"):
+        server.describe_product("nmme/cfsv3")

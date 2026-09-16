@@ -8,6 +8,10 @@ Design rules (keep these when adding tools):
 * Arrays never cross the wire. Data-producing tools write NetCDF to
   ``ACMADDL_MCP_WORKDIR`` (default ``~/.acmaddl/mcp``) and return the path
   plus a compact JSON summary (dims, coords, variables, units).
+* Every parameter carries a schema-level description (``Annotated[...,
+  Field(description=...)]``) and closed vocabularies are ``Literal`` enums
+  derived from the catalog / library, so an agent sees valid values without
+  a second call. Every tool documents what it returns and shows one example.
 * Library exceptions are re-raised as ``ToolError`` so the calling agent sees
   the message. The MCP SDK hides the text of any other exception.
 * CDS / ECDS requests can queue for many minutes, longer than most MCP clients
@@ -18,18 +22,23 @@ Design rules (keep these when adding tools):
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
+import inspect
 import json
 import os
 import threading
 import traceback
 import uuid
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
 import acmaddl
 from acmaddl import catalog
@@ -50,7 +59,7 @@ Workflow: list_products -> describe_product -> (check_product) -> fetch.
 fetch writes a NetCDF file and returns its path plus a summary; pass that path
 to other tools or servers (e.g. africas2s-mcp). Use describe_dataset to
 inspect any NetCDF file. For hindcast + forecast on a (year, member, lat, lon)
-grid ready for downscaling, use fetch with year_index=true.
+grid ready for downscaling, use fetch with year_index=true and a hindcast range.
 
 CDS/ECDS products can queue for a long time: prefer start_fetch + fetch_status
 when a fetch might exceed your tool timeout. Results are cached locally, so a
@@ -68,8 +77,108 @@ mcp = MCPServer(
 
 
 # --------------------------------------------------------------------------
+# vocabularies derived from the catalog, so the schema shows valid values
+# --------------------------------------------------------------------------
+
+def _all_products() -> list[str]:
+    return catalog.list_products(include_deprecated=True)
+
+
+def _catalog_variables() -> tuple[str, ...]:
+    names: set[str] = set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for pid in _all_products():
+            names |= set((catalog.info(pid).get("variables") or {}).keys())
+    return tuple(sorted(names))
+
+
+Variable = Literal[_catalog_variables()]
+Stat = Literal["mean", "sum", "min", "max", "median", "std", "count"]
+Weights = Literal["area", "cos_lat"]
+Boundary = Literal["center", "cover"]
+
+
+# --------------------------------------------------------------------------
+# typed results (become the tools' output schemas)
+# --------------------------------------------------------------------------
+
+class CoordSummary(TypedDict, total=False):
+    size: int
+    dtype: str
+    min: float
+    max: float
+    step: float
+    first: str
+    last: str
+
+
+class VariableSummary(TypedDict, total=False):
+    dims: list[str]
+    shape: list[int]
+    dtype: str
+    units: str | None
+    nan_fraction: float
+    min: float
+    max: float
+
+
+class DatasetSummary(TypedDict):
+    """What every data-producing tool returns: where the file is and what is in it."""
+    dims: dict[str, int]
+    coords: dict[str, CoordSummary]
+    variables: dict[str, VariableSummary]
+    attrs: dict[str, Any]
+    path: NotRequired[str]
+    size_bytes: NotRequired[int]
+    request: NotRequired[dict[str, Any]]
+
+
+class ProductListing(TypedDict):
+    product: str
+    adapter: str | None
+    variables: list[str]
+    deprecated: bool
+    notes: str | None
+
+
+class JobHandle(TypedDict):
+    job_id: str
+    status: Literal["running"]
+
+
+class JobStatus(TypedDict):
+    job_id: str
+    status: Literal["running", "done", "error"]
+    started_at: str
+    finished_at: str | None
+    result: DatasetSummary | None
+    error: str | None
+    traceback: NotRequired[str]
+
+
+# --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+def tool(*, read_only: bool = False, idempotent: bool = True, open_world: bool = False,
+         destructive: bool = False, **kwargs):
+    """``mcp.tool`` with client-facing annotations and a dedented docstring.
+
+    ``read_only``: no side effects. ``open_world``: talks to external services
+    (data providers). ``idempotent``: repeating the call with the same
+    arguments has no additional effect. ``destructive``: may delete or
+    overwrite data the caller did not create.
+    """
+    annotations = ToolAnnotations(read_only_hint=read_only, destructive_hint=destructive,
+                                  idempotent_hint=idempotent, open_world_hint=open_world)
+
+    def decorate(fn):
+        description = kwargs.pop("description", None) or inspect.cleandoc(fn.__doc__ or "")
+        return mcp.tool(annotations=annotations, description=description, **kwargs)(fn)
+
+    return decorate
+
 
 def workdir() -> Path:
     """Directory where data-producing tools write their NetCDF outputs."""
@@ -89,11 +198,11 @@ def _json_safe(obj: Any) -> Any:
         return [_json_safe(v) for v in obj]
     if isinstance(obj, Path):
         return str(obj)
-    if isinstance(obj, (np.generic,)):
+    if isinstance(obj, np.generic):
         return _json_safe(obj.item())
     if isinstance(obj, np.ndarray):
         return _json_safe(obj.tolist())
-    if isinstance(obj, (datetime,)):
+    if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, float) and obj != obj:  # NaN
         return None
@@ -102,11 +211,11 @@ def _json_safe(obj: Any) -> Any:
     return str(obj)
 
 
-def _coord_summary(coord) -> dict:
+def _coord_summary(coord) -> CoordSummary:
     import numpy as np
 
     vals = coord.values
-    out: dict[str, Any] = {"size": int(vals.size), "dtype": str(vals.dtype)}
+    out: CoordSummary = {"size": int(vals.size), "dtype": str(vals.dtype)}
     if vals.size == 0:
         return out
     flat = vals.ravel()
@@ -126,7 +235,7 @@ def _coord_summary(coord) -> dict:
     return out
 
 
-def summarize(ds, *, path: str | Path | None = None, max_stats_elements: int = 20_000_000) -> dict:
+def summarize(ds, *, path: str | Path | None = None, max_stats_elements: int = 20_000_000) -> DatasetSummary:
     """Compact, JSON-safe description of a Dataset / DataArray.
 
     ``max_stats_elements`` caps the size at which per-variable min/max/NaN
@@ -137,7 +246,7 @@ def summarize(ds, *, path: str | Path | None = None, max_stats_elements: int = 2
 
     if isinstance(ds, xr.DataArray):
         ds = ds.to_dataset(name=ds.name or "data")
-    out: dict[str, Any] = {
+    out: DatasetSummary = {
         "dims": {k: int(v) for k, v in ds.sizes.items()},
         "coords": {k: _coord_summary(ds.coords[k]) for k in ds.coords},
         "variables": {},
@@ -150,11 +259,12 @@ def summarize(ds, *, path: str | Path | None = None, max_stats_elements: int = 2
         except OSError:
             pass
     for name, da in ds.data_vars.items():
-        entry: dict[str, Any] = {
+        units = da.attrs.get("units")
+        entry: VariableSummary = {
             "dims": list(da.dims),
             "shape": [int(s) for s in da.shape],
             "dtype": str(da.dtype),
-            "units": da.attrs.get("units"),
+            "units": None if units is None else str(units),
         }
         if da.size and da.size <= max_stats_elements and np.issubdtype(da.dtype, np.number):
             vals = da.values
@@ -212,6 +322,16 @@ def _output_path(destination: str | None, *parts: Any, params: dict) -> str:
     return str(workdir() / f"{_slug(*parts)}_{digest}.nc")
 
 
+def _require_product(product: str) -> None:
+    """Fail early with suggestions instead of a bare KeyError from the catalog."""
+    known = _all_products()
+    if product in known:
+        return
+    close = difflib.get_close_matches(product, known, n=3, cutoff=0.5)
+    hint = f" Did you mean {close}?" if close else ""
+    raise ToolError(f"Product not found: {product!r}.{hint} Call list_products for the catalog.")
+
+
 def _region_arg(region):
     if region is None:
         return None
@@ -241,16 +361,27 @@ def _wrap(exc: Exception) -> ToolError:
 # catalog + health
 # --------------------------------------------------------------------------
 
-@mcp.tool()
-def list_products(include_deprecated: bool = False) -> list[dict]:
-    """List catalog products with adapter and the variables each one declares.
+ProductArg = Annotated[str, Field(
+    description='Catalog product id, e.g. "nmme/cfsv2", "c3s/ecmwf", "obs/era5", '
+                '"obs/chirps-v3-monthly", "chc/chirps-gefs-daily". list_products shows them all.')]
 
-    Product ids look like "nmme/cfsv2", "obs/era5", "obs/chirps-v3-monthly". Use
-    describe_product for the full catalog entry.
+
+@tool(read_only=True)
+def list_products(
+    include_deprecated: Annotated[bool, Field(
+        description="Also list deprecated products and aliases (default: current products only).")] = False,
+) -> list[ProductListing]:
+    """List catalog products with their adapter and the variables each one declares.
+
+    Start here to pick a product id for describe_product / check_product / fetch.
+    Product ids are namespaced: nmme/* and c3s/* are seasonal forecast models,
+    obs/* are observations and reanalyses, chc/* are CHC short-range products.
+
+    Returns: a list of {product, adapter, variables, deprecated, notes}.
+    Example: list_products() -> [{"product": "nmme/cfsv2", "adapter": "opendap",
+    "variables": ["precip", "temp", "sst"], ...}, ...]
     """
-    import warnings
-
-    out = []
+    out: list[ProductListing] = []
     for pid in catalog.list_products(include_deprecated=include_deprecated):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
@@ -265,18 +396,22 @@ def list_products(include_deprecated: bool = False) -> list[dict]:
     return out
 
 
-@mcp.tool()
-def describe_product(product: str) -> dict:
-    """Full catalog entry for one product: adapter, source URL, variables with
-    native names and units, grid, notes, deprecation status."""
-    import warnings
+@tool(read_only=True)
+def describe_product(product: ProductArg) -> dict[str, Any]:
+    """Full catalog entry for one product.
 
-    try:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", DeprecationWarning)
-            entry = catalog.info(product)
-    except KeyError as exc:
-        raise ToolError(str(exc)) from exc
+    Use it to learn what a product can serve before fetching: variables with
+    native names and units, the adapter and source URL, grid, notes, and
+    whether it is deprecated (and what replaces it).
+
+    Returns: the catalog entry as JSON plus "product", and
+    "deprecation_warnings" when the id is deprecated or an alias.
+    Example: describe_product(product="nmme/cfsv2")
+    """
+    _require_product(product)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        entry = catalog.info(product)
     result = _json_safe(entry)
     result["product"] = product
     notes = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
@@ -285,21 +420,45 @@ def describe_product(product: str) -> dict:
     return result
 
 
-@mcp.tool()
-def check_product(product: str, variable: str | None = None, probe_remote: bool = False) -> dict:
-    """Health-check one product: credentials / config present, and (optionally)
-    that the remote source answers. Pass variable to also confirm the product can
-    serve it. probe_remote=true contacts the source and can be slow."""
+@tool(read_only=True, open_world=True)
+def check_product(
+    product: ProductArg,
+    variable: Annotated[Variable | None, Field(
+        description="Also confirm the product can serve this variable.")] = None,
+    probe_remote: Annotated[bool, Field(
+        description="Contact the data source to confirm it answers. Slower; may need credentials.")] = False,
+) -> dict[str, Any]:
+    """Health-check one product: credentials and config present, and optionally
+    that the remote source answers.
+
+    Call it before a fetch you have not run before. "kind" tells you what to do:
+    "capability" (product cannot serve that variable: pick another product),
+    "config" (credentials or URL missing: fix the setup), "remote"/"transient"
+    (source outage: retry later).
+
+    Returns: {product, adapter, checked_at, healthy, kind, message, ...}.
+    Example: check_product(product="c3s/ecmwf", variable="precip", probe_remote=true)
+    """
+    _require_product(product)
     try:
         return _json_safe(acmaddl.check_product(product, probe_remote=probe_remote, variable=variable))
     except Exception as exc:  # noqa: BLE001
         raise _wrap(exc) from exc
 
 
-@mcp.tool()
-def check_all_products(variable: str | None = None, probe_remote: bool = False) -> list[dict]:
-    """Health-check every product. With variable set this doubles as a capability
-    sweep: which products can serve precip / temp / sst."""
+@tool(read_only=True, open_world=True)
+def check_all_products(
+    variable: Annotated[Variable | None, Field(
+        description="Restrict to products able to serve this variable (a capability sweep).")] = None,
+    probe_remote: Annotated[bool, Field(
+        description="Contact every data source. Slow; may need credentials.")] = False,
+) -> list[dict[str, Any]]:
+    """Health-check every product at once.
+
+    With variable set this answers "which products can serve precip / temp / sst".
+    Returns: one check_product result per product.
+    Example: check_all_products(variable="sst")
+    """
     try:
         return _json_safe(acmaddl.check_all_products(probe_remote=probe_remote, variable=variable))
     except Exception as exc:  # noqa: BLE001
@@ -310,9 +469,54 @@ def check_all_products(variable: str | None = None, probe_remote: bool = False) 
 # fetch (sync + background job)
 # --------------------------------------------------------------------------
 
+VariableArg = Annotated[Variable, Field(
+    description='Canonical variable name. Most products serve "precip" and "temp"; '
+                'SST products serve "sst".')]
+InitArg = Annotated[str | list[str] | None, Field(
+    description='Forecast issuance: "YYYY-MM" for seasonal products, "YYYY-MM-DD" for '
+                'sub-seasonal / short-range ones, or a list of dates for issuance-keyed '
+                'products (CHIRPS-GEFS) to stack many issuances. Omit for observations.')]
+TargetArg = Annotated[str | None, Field(
+    description='Target season as consecutive month initials, e.g. "MAM", "OND", "JJAS". '
+                'Omit for raw observations.')]
+RegionArg = Annotated[list[float] | str | None, Field(
+    description="[lat_s, lat_n, lon_w, lon_e] bounding box, or a path to a .shp shapefile "
+                "(result masked to the polygon; needs the geo extra). Omit for the full domain.")]
+HindcastArg = Annotated[list[int] | None, Field(
+    description="[start_year, end_year] to also pull the hindcast years, e.g. [1993, 2016].")]
+YearIndexArg = Annotated[bool, Field(
+    description="Collapse to (year, member, lat, lon) seasonal totals, the shape africas2s "
+                "downscaling expects. Requires target and hindcast.")]
+MonthsArg = Annotated[list[int] | None, Field(
+    description="Restrict an observational fetch to these calendar months, e.g. [6, 7, 8, 9]. "
+                "Prunes the download for monthly-file products.")]
+SeasonalArg = Annotated[bool | None, Field(
+    description="Force seasonal (true) or monthly (false) handling; default lets the product decide.")]
+RegridToArg = Annotated[str | None, Field(
+    description="Regrid onto another product's grid, given as that product's id.")]
+GridResArg = Annotated[float | None, Field(
+    description="Regrid to a fixed resolution in degrees, e.g. 0.25.")]
+CacheArg = Annotated[bool, Field(
+    description="Use the local cache (default). false forces a fresh download.")]
+ReforecastArg = Annotated[bool, Field(
+    description="Fetch the reforecast (hindcast) suite for the issuance instead of the forecast. "
+                "CDS s2s products only.")]
+BoundaryArg = Annotated[Boundary, Field(
+    description='Which grid cells count as inside the region: "center" (cell centre inside; '
+                'unbiased for area means) or "cover" (every touched cell; best for display '
+                'and small regions).')]
+OptionsArg = Annotated[dict[str, Any] | None, Field(
+    description="Any other acmaddl.fetch keyword: allow_partial, max_retries, retry_backoff, "
+                "request_interval, degenerate_attempts, region_buffer, format.")]
+DestinationArg = Annotated[str | None, Field(
+    description="Explicit output path (.nc, or s3://...). Default: a stable name derived from "
+                "the request under ACMADDL_MCP_WORKDIR, so repeating a request reuses the file.")]
+
+
 def _fetch_kwargs(product, variable, init, target, region, hindcast, year_index,
                   months, seasonal, regrid_to, grid_res, cache, reforecast,
                   boundary, options) -> dict:
+    _require_product(product)
     kwargs: dict[str, Any] = dict(
         product=product, variable=variable, init=init, target=target,
         region=_region_arg(region), hindcast=_hindcast_arg(hindcast),
@@ -332,7 +536,7 @@ def _fetch_kwargs(product, variable, init, target, region, hindcast, year_index,
     return kwargs
 
 
-def _run_fetch(kwargs: dict, destination: str | None) -> dict:
+def _run_fetch(kwargs: dict, destination: str | None) -> DatasetSummary:
     params = {k: v for k, v in kwargs.items() if k not in ("verbose", "progress")}
     init = kwargs.get("init")
     init_tag = init if isinstance(init, str) else (f"{init[0]}..{init[-1]}" if init else None)
@@ -347,47 +551,41 @@ def _run_fetch(kwargs: dict, destination: str | None) -> dict:
     return summary
 
 
-_FETCH_DOC = """\
-product: catalog id, e.g. "nmme/cfsv2", "c3s/ecmwf", "obs/era5", "obs/chirps-v3-monthly".
-variable: canonical name — "precip", "temp", or "sst".
-init: forecast issuance — "YYYY-MM" for seasonal products, "YYYY-MM-DD" for
-  sub-seasonal / short-range ones, or a list of dates for issuance-keyed
-  products (CHIRPS-GEFS). Omit for observations.
-target: season, e.g. "MAM", "OND", "JJAS". Omit for raw observations.
-region: [lat_s, lat_n, lon_w, lon_e] bbox, or a path to a .shp shapefile
-  (result masked to the polygon; needs the geo extra).
-hindcast: [start_year, end_year] to also pull the hindcast years.
-year_index: true collapses to (year, member, lat, lon) seasonal totals, the
-  shape africas2s downscaling expects.
-months: restrict an observational fetch to calendar months, e.g. [6,7,8,9].
-regrid_to / grid_res: regrid onto another product's grid or a fixed resolution.
-options: any other acmaddl.fetch keyword (allow_partial, max_retries,
-  request_interval, degenerate_attempts, region_buffer, ...).
-destination: explicit output path (.nc or s3://...). Default: a stable
-  name under ACMADDL_MCP_WORKDIR."""
-
-
-@mcp.tool(description="Fetch one product/variable, normalize it, write NetCDF, and "
-          "return the path plus a summary. Blocks until done; for slow CDS/ECDS "
-          "requests use start_fetch instead.\n\n" + _FETCH_DOC)
+@tool(open_world=True)
 def fetch(
-    product: str,
-    variable: str,
-    init: str | list[str] | None = None,
-    target: str | None = None,
-    region: list[float] | str | None = None,
-    hindcast: list[int] | None = None,
-    year_index: bool = False,
-    months: list[int] | None = None,
-    seasonal: bool | None = None,
-    regrid_to: str | None = None,
-    grid_res: float | None = None,
-    cache: bool = True,
-    reforecast: bool = False,
-    boundary: str = "center",
-    options: dict[str, Any] | None = None,
-    destination: str | None = None,
-) -> dict:
+    product: ProductArg,
+    variable: VariableArg,
+    init: InitArg = None,
+    target: TargetArg = None,
+    region: RegionArg = None,
+    hindcast: HindcastArg = None,
+    year_index: YearIndexArg = False,
+    months: MonthsArg = None,
+    seasonal: SeasonalArg = None,
+    regrid_to: RegridToArg = None,
+    grid_res: GridResArg = None,
+    cache: CacheArg = True,
+    reforecast: ReforecastArg = False,
+    boundary: BoundaryArg = "center",
+    options: OptionsArg = None,
+    destination: DestinationArg = None,
+) -> DatasetSummary:
+    """Fetch one product/variable, normalize it, write NetCDF, and return the
+    path plus a summary of what is in the file.
+
+    Blocks until the data is on disk. CDS/ECDS products (c3s/*, obs/era5) can
+    queue for many minutes; if that may exceed your tool timeout use
+    start_fetch + fetch_status instead. Repeating an identical request is fast
+    because results are cached.
+
+    Output shapes: forecasts (init_time, lead_time, member, lat, lon);
+    observations (time, lat, lon); with year_index=true (year, member, lat,
+    lon) seasonal totals ready for africas2s downscale.
+
+    Returns: {path, dims, coords, variables, attrs, size_bytes, request}.
+    Example: fetch(product="nmme/cfsv2", variable="precip", init="2025-02",
+    target="MAM", region=[-12, 6, 28, 42], hindcast=[1993, 2016], year_index=true)
+    """
     kwargs = _fetch_kwargs(product, variable, init, target, region, hindcast, year_index,
                            months, seasonal, regrid_to, grid_res, cache, reforecast,
                            boundary, options)
@@ -427,7 +625,7 @@ class _Jobs:
         threading.Thread(target=_target, name=f"acmaddl-mcp-{job_id}", daemon=True).start()
         return job_id
 
-    def get(self, job_id: str) -> dict:
+    def get(self, job_id: str) -> dict | None:
         with self._lock:
             record = self._jobs.get(job_id)
             return dict(record) if record else None
@@ -440,26 +638,35 @@ class _Jobs:
 _jobs = _Jobs()
 
 
-@mcp.tool(description="Start a fetch on a background thread and return a job_id "
-          "immediately. Poll fetch_status. Same parameters as fetch.\n\n" + _FETCH_DOC)
+@tool(open_world=True, idempotent=False)
 def start_fetch(
-    product: str,
-    variable: str,
-    init: str | list[str] | None = None,
-    target: str | None = None,
-    region: list[float] | str | None = None,
-    hindcast: list[int] | None = None,
-    year_index: bool = False,
-    months: list[int] | None = None,
-    seasonal: bool | None = None,
-    regrid_to: str | None = None,
-    grid_res: float | None = None,
-    cache: bool = True,
-    reforecast: bool = False,
-    boundary: str = "center",
-    options: dict[str, Any] | None = None,
-    destination: str | None = None,
-) -> dict:
+    product: ProductArg,
+    variable: VariableArg,
+    init: InitArg = None,
+    target: TargetArg = None,
+    region: RegionArg = None,
+    hindcast: HindcastArg = None,
+    year_index: YearIndexArg = False,
+    months: MonthsArg = None,
+    seasonal: SeasonalArg = None,
+    regrid_to: RegridToArg = None,
+    grid_res: GridResArg = None,
+    cache: CacheArg = True,
+    reforecast: ReforecastArg = False,
+    boundary: BoundaryArg = "center",
+    options: OptionsArg = None,
+    destination: DestinationArg = None,
+) -> JobHandle:
+    """Start the same fetch as `fetch` on a background thread and return at once.
+
+    Use for CDS/ECDS products or large regions where a blocking fetch could
+    time out. Poll fetch_status(job_id) until status is "done" (the result is
+    the fetch summary) or "error". Jobs live only as long as this server process.
+
+    Returns: {job_id, status: "running"}.
+    Example: start_fetch(product="c3s/ecmwf", variable="precip", init="2025-02",
+    target="MAM", region=[-12, 6, 28, 42], hindcast=[1993, 2016], year_index=true)
+    """
     kwargs = _fetch_kwargs(product, variable, init, target, region, hindcast, year_index,
                            months, seasonal, regrid_to, grid_res, cache, reforecast,
                            boundary, options)
@@ -467,19 +674,28 @@ def start_fetch(
     return {"job_id": job_id, "status": "running"}
 
 
-@mcp.tool()
-def fetch_status(job_id: str) -> dict:
-    """Status of a start_fetch job: running, done (with the fetch result), or
-    error (with the message)."""
+@tool(read_only=True)
+def fetch_status(
+    job_id: Annotated[str, Field(description="The job_id returned by start_fetch.")],
+) -> JobStatus:
+    """Status of a start_fetch job.
+
+    Returns: {job_id, status: "running" | "done" | "error", started_at,
+    finished_at, result (the fetch summary when done), error (message when failed)}.
+    Example: fetch_status(job_id="3f9c2a1b7d4e")
+    """
     record = _jobs.get(job_id)
     if record is None:
         raise ToolError(f"Unknown job_id {job_id!r}. Known: {[j['job_id'] for j in _jobs.all()]}")
     return record
 
 
-@mcp.tool()
-def list_jobs() -> list[dict]:
-    """All start_fetch jobs in this server process, without their results."""
+@tool(read_only=True)
+def list_jobs() -> list[dict[str, Any]]:
+    """All start_fetch jobs in this server process, without their results.
+
+    Returns: a list of {job_id, status, started_at, finished_at, error}.
+    """
     return _jobs.all()
 
 
@@ -487,36 +703,48 @@ def list_jobs() -> list[dict]:
 # datasets
 # --------------------------------------------------------------------------
 
-@mcp.tool()
-def describe_dataset(path: str) -> dict:
-    """Summarize a NetCDF file: dims, coordinate ranges, variables, units, NaN
-    fraction, global attributes. Use it on any path returned by another tool."""
+@tool(read_only=True)
+def describe_dataset(
+    path: Annotated[str, Field(description="Path to a NetCDF file, e.g. one returned by fetch or zonal.")],
+) -> DatasetSummary:
+    """Summarize a NetCDF file without loading it into your context: dims,
+    coordinate ranges, variables with units and NaN fraction, global attributes.
+
+    Use it to check shapes before handing a file to another tool or server.
+    Returns: {path, dims, coords, variables, attrs, size_bytes}.
+    Example: describe_dataset(path="~/.acmaddl/mcp/nmme-cfsv2_precip_2025-02_MAM_1a2b3c4d.nc")
+    """
     with _open(path) as ds:
         return summarize(ds, path=Path(path).expanduser())
 
 
-@mcp.tool()
+@tool()
 def zonal(
-    path: str,
-    geometries: str,
-    by: str | None = None,
-    label: str | None = None,
-    stat: str = "mean",
-    weights: str | None = "area",
-    all_touched: bool = False,
-    dim: str = "region",
-    destination: str | None = None,
-) -> dict:
-    """Reduce a gridded NetCDF file to one value per polygon (district, basin,
-    admin unit) and write the result as NetCDF.
+    path: Annotated[str, Field(description="Gridded NetCDF with lat/lon dims (e.g. a fetch output).")],
+    geometries: Annotated[str, Field(
+        description="Shapefile (.shp) or GeoJSON path with one feature per zone (district, basin, admin unit).")],
+    by: Annotated[str | None, Field(
+        description="Attribute column with a unique code to index the new axis by (e.g. \"shapeID\"). "
+                    "Default: feature position.")] = None,
+    label: Annotated[str | None, Field(
+        description="Attribute column carried as a display name coordinate ({dim}_label). May repeat.")] = None,
+    stat: Annotated[Stat, Field(description="The reduction over each zone's cells.")] = "mean",
+    weights: Annotated[Weights | None, Field(
+        description='Cell weighting for mean/sum: "area" (default, cos-latitude area), "cos_lat", or null.')] = "area",
+    all_touched: Annotated[bool, Field(
+        description="Include every cell a polygon touches, not only cells whose centre is inside. "
+                    "Needed when zones are smaller than a grid cell.")] = False,
+    dim: Annotated[str, Field(description='Name of the new zone axis (default "region").')] = "region",
+    destination: DestinationArg = None,
+) -> DatasetSummary:
+    """Reduce a gridded NetCDF file to one value per polygon and write the
+    result as NetCDF. lat/lon are replaced by a `dim` axis; all other dims
+    (time, year, member, ...) are preserved. Needs the geo extra (geopandas).
 
-    path: gridded NetCDF with lat/lon dims (e.g. a fetch output).
-    geometries: shapefile / GeoJSON path; one output element per feature.
-    by: unique column to index the new dim by (an admin code). label: display
-    column carried as {dim}_label. stat: mean|sum|min|max|median|std|count.
-    weights: "area" (default), "cos_lat", or null. all_touched: include every
-    cell a polygon touches (needed for polygons smaller than a grid cell).
-    Needs the geo extra (geopandas)."""
+    Returns: {path, dims, coords, variables, attrs, size_bytes, request}.
+    Example: zonal(path="chirps.nc", geometries="ethiopia_woredas.shp",
+    by="shapeID", label="shapeName", stat="mean", all_touched=true)
+    """
     with _open(path) as ds:
         try:
             out = acmaddl.zonal(ds.load(), geometries, by=by, label=label, stat=stat,
