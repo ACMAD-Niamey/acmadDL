@@ -162,12 +162,31 @@ Returns the same type as `data` with `lat`/`lon` replaced by `dim`; output **mir
   - `variable=<name>` also checks the product can serve it. A variable the catalog does not declare returns `kind="capability"`, `healthy=False`, plus `variable` and `available` keys — reported *distinctly* from a `config` problem or a `remote`/`transient` outage, which is the distinction between "deselect this product" and "retry later". Answerable from the catalog alone, so it never costs a remote probe even with `probe_remote=True`. Unlike `fetch()`, this **returns** the mismatch rather than raising `VariableNotSupported` — health checks report, they do not throw.
 - `check_all_products(probe_remote=False, variable=None) -> list[dict]` — iterates the whole catalog, converting exceptions into `kind="runtime"` failures. `variable` is threaded through, so this doubles as a capability sweep ("which products can serve precip?").
 
+## `usable(field, *, variable=None, units=None, limit=None, fill=1e10, tolerance=1e-3) -> bool`
+
+Re-exported at top level (`acmaddl.usable`; lives in `validate.py`). The one-line "is this returned field real data?" guard a workflow runs on every model before letting it into a calibration — CCSR has served all-fill precipitation for whole targets, and which model does so changes from month to month. Non-finite cells and fill (`abs(x) >= fill`, legitimate over ocean/land edges) are discarded first; what remains must be non-empty, not all zero, and plausible:
+
+- `limit=`: every remaining `abs(x) <= limit`.
+- `variable=` (`precip`/`temp`/`sst`/`pev`): the same unit-aware ranges as `check_structure`. `units` defaults to the field's `units` attribute; precipitation with unknown units is judged against the most permissive ceiling (5000 mm, a seasonal total) rather than the daily-rate one, so a missing attribute never rejects real data.
+- neither: `abs(x) <= 5000`.
+
+`tolerance` is the fraction of remaining cells allowed outside the range (default 0.1 %): a wet model's handful of extreme ITCZ cells is not corruption (GEOSS2S legitimately tops 5000 mm/season at a few points), a field that is a quarter absurd values is. `tolerance=0` restores the strict every-cell rule.
+
+Takes a DataArray or array (a Dataset raises `TypeError`), returns a plain bool, never raises on bad data. Typical use:
+
+```python
+pair = assemble([(label, product, window)], "precip", init=init, target=target)[label]
+if not all(usable(x, variable="precip") for x in pair):
+    dropped.append(label)   # stated reason, not a silently shrunken roster
+```
+
 ## `validate` module (not re-exported; `from acmaddl import validate`)
 
 For checking acmaddl output against independent references:
 
 - `ValidationResult` dataclass — fields include `product`, `variable`, `reference`, `r_timeseries`, `r_spatial`, `status`, `threshold=0.95`, `structural_checks`, `error`, `timestamp`; methods `passed()`, `to_report_entry()`.
-- `check_structure(ds, product, variable, product_config=None) -> dict` — variable presence, units attr, spatial dims, not-all-NaN, unit-aware plausible value ranges (precip rates up to 500 mm/day; accumulated precip up to 5000 mm; temp -90-70 C; sst -3-45 C; ±50 tolerance), member count vs catalog, hindcast range.
+- `check_structure(ds, product, variable, product_config=None) -> dict` — variable presence, units attr, spatial dims, not-all-NaN, unit-aware plausible value ranges, member count vs catalog, and one coverage check. Ranges: precip rates up to 500 mm/day, monthly totals (`mm/month`, e.g. `obs/gpcc-*`/`obs/tamsat`) up to 3000, accumulated precip (`mm`) up to 5000; temp -90-70 C; sst -3-45 C; pev 0-30 mm/day. Tolerance outside the range is **±50 for temp/sst but only ±1 for the non-negative rates** (`precip`, `pev`) — a wide slack there would wave through a flipped sign, which is exactly the ERA5 pev convention the catalog corrects.
+- Coverage check, keyed by what dim the data carries: `hindcast_range` for forecasts (`init_time`) is **informational and always passes** — a reforecast window is not a data cap, and real-time inits legitimately run past it. `coverage_range` for observations (`time`) is a **real pass/fail**, since for `obs/*` the catalog's `hindcast_range` denotes data coverage; data outside it means the entry over- or under-claims. `tests/test_obs_coverage.py` is the live counterpart, pinning each new obs product's declared boundary from both sides.
 - `compare(acmaddl_da, reference_da, threshold=0.95) -> (r_ts, r_spatial, status)` — regrids to a common grid, computes temporal and spatial Pearson correlations; status `PASS`/`CHECK`/`ERROR`.
 - `regrid_to_common(da1, da2)`, `compute_correlations(ros_da, ref_da)` (needs `(init_time, lat, lon)`), `validate_product(...)`, `write_report(results, path=None)` / `read_report(path=None)` (default `output/validation_report.json`).
 

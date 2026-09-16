@@ -41,9 +41,9 @@ def test_higher_resolution_than_single_level_era5():
     assert land["lon_res"] < base["lon_res"]
 
 
-def test_variables_are_precip_and_temp():
+def test_precip_and_temp_declare_their_cds_names():
+    """The variable SET is pinned by test_pev_is_a_third_variable_… below."""
     v = catalog.info(PRODUCT)["variables"]
-    assert set(v) == {"precip", "temp"}
     assert v["precip"]["native_name"] == "total_precipitation"
     assert v["precip"]["short_name"] == "tp"
     assert v["temp"]["native_name"] == "2m_temperature"
@@ -96,7 +96,8 @@ def _synthetic_era5_land():
             "t2m": (["time", "latitude", "longitude"],
                     np.full(shape, 300.0, dtype="float32")),   # 300 K → 26.85 C
         },
-        coords={"time": times, "latitude": lat, "longitude": lon},
+        coords={"time": times.values.astype("datetime64[ns]"),
+                "latitude": lat, "longitude": lon},
     )
 
 
@@ -118,3 +119,52 @@ def test_normalize_temp_kelvin_to_celsius():
     assert float(out["temp"].min()) == pytest.approx(26.85, abs=0.01)
     assert float(out["temp"].max()) == pytest.approx(26.85, abs=0.01)
     np.testing.assert_allclose(float(out["temp"].astype("float64").mean()), 26.85, atol=0.01)
+
+
+# ── Potential evaporation ────────────────────────────────────────────────────
+# CDS serves ERA5-Land pev in metres with a NEGATIVE sign (ERA5's flux
+# convention: negative = upward = evaporation). Verified live 2026-09-02 for
+# July 2020 over 5-20 N / 10 W-10 E: min -0.0230, mean -0.0090, max -0.0025 m.
+
+def test_pev_is_a_third_variable_alongside_precip_and_temp():
+    assert set(catalog.info(PRODUCT)["variables"]) == {"precip", "temp", "pev"}
+
+
+def test_pev_declares_the_cds_name_and_short_name():
+    v = catalog.info(PRODUCT)["variables"]["pev"]
+    assert v["native_name"] == "potential_evaporation"
+    assert v["short_name"] == "pev"
+
+
+def test_pev_converts_metres_to_a_positive_daily_rate():
+    """Same m -> mm/day convention as precip, plus the sign flip."""
+    v = catalog.info(PRODUCT)["variables"]["pev"]
+    assert v["units"] == "m" and v["target_units"] == "mm/day"
+    assert v["scale"] == -1.0
+
+
+def _synthetic_era5_land_pev():
+    times = pd.date_range("2020-07-01", periods=1, freq="MS")
+    lat = np.round(np.arange(5.0, 20.0, 0.1), 1)
+    lon = np.round(np.arange(-10.0, 10.0, 0.1), 1)
+    shape = (len(times), len(lat), len(lon))
+    return xr.Dataset(
+        {"pev": (["valid_time", "latitude", "longitude"],
+                 np.full(shape, -0.009, dtype="float32"))},
+        coords={"valid_time": times.values.astype("datetime64[ns]"),
+                "latitude": lat, "longitude": lon},
+    )
+
+
+def test_normalize_returns_pev_as_a_positive_mm_per_day_rate():
+    out = normalize(_synthetic_era5_land_pev(), catalog.info(PRODUCT), "pev")
+    assert out["pev"].attrs["units"] == "mm/day"
+    val = float(out["pev"].astype("float64").mean())
+    assert val > 0, f"pev should be a positive evaporative demand, got {val}"
+    np.testing.assert_allclose(val, 9.0, atol=1e-3)
+
+
+def test_pev_does_not_disturb_the_precip_conversion():
+    """Regression: the scale knob is per-variable, not per-product."""
+    out = normalize(_synthetic_era5_land(), catalog.info(PRODUCT), "precip")
+    np.testing.assert_allclose(float(out["precip"].mean()), 5.0, atol=1e-4)

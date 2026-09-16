@@ -170,6 +170,53 @@ def clip_to_geometry(ds, geometry, all_touched=False):
     return clipped
 
 
+def lon_selection_bounds(lon_values, lon_w, lon_e):
+    """The contiguous ``(start, stop)`` slice bounds covering ``[lon_w, lon_e]``.
+
+    Returns ONE pair normally and TWO when the requested box crosses the data's
+    longitude seam (e.g. an Africa box -30..60 against a 0..360 grid becomes
+    330..360 plus 0..60). Bounds come back already translated into whichever
+    convention ``lon_values`` uses, and every pair is ascending, so each one is
+    a valid single ``slice``. A full-globe request collapses to one
+    all-inclusive pair.
+
+    Split out from :func:`select_lon` so a caller can *plan requests* with it.
+    That matters over OPeNDAP: ``select_lon`` answers the seam case by
+    concatenating two LAZY slices, which becomes a single malformed DAP request
+    that NOAA PSL answers with a zero-filled array (probe-verified 2026-09-02:
+    it truncates at every size, while the same cell count loads fine as one
+    contiguous request). The adapter uses these bounds to issue one contiguous
+    request per segment and join the loaded results instead — while the
+    convention logic itself stays here, in one place.
+    """
+    lon = np.asarray(lon_values, dtype=float)
+    lo, hi = float(np.nanmin(lon)), float(np.nanmax(lon))
+
+    # Full-globe request -> everything (the -180..180 vs 0..360 footgun).
+    if (lon_e - lon_w) >= 359.0:
+        return [(lo, hi)]
+
+    data_0_360 = hi > 180.0
+    w, e = lon_w, lon_e
+    if data_0_360:
+        # data in 0..360: map any negative requested bound into 0..360
+        if w < 0:
+            w += 360.0
+        if e < 0:
+            e += 360.0
+    else:
+        # data in -180..180: map any requested bound above 180 into -180..180
+        if w > 180.0:
+            w -= 360.0
+        if e > 180.0:
+            e -= 360.0
+
+    if w <= e:
+        return [(w, e)]
+    # box wraps the seam (e.g. Atlantic -70..20 -> 290..20 in 0..360)
+    return [(w, hi), (lo, e)]
+
+
 def select_lon(ds, lon_w, lon_e, lon_name="lon"):
     """Longitude subselection that is robust to the source's longitude convention.
 
@@ -194,37 +241,20 @@ def select_lon(ds, lon_w, lon_e, lon_name="lon"):
         lon = ds[lon_name].values
     lo, hi = float(np.nanmin(lon)), float(np.nanmax(lon))
 
-    # Full-globe request -> keep everything (this is the −180..180 vs 0..360 footgun).
-    if (lon_e - lon_w) >= 359.0:
+    bounds = lon_selection_bounds(lon, lon_w, lon_e)
+    if len(bounds) == 1 and bounds[0] == (lo, hi):
         return ds
-
-    data_0_360 = hi > 180.0
-    w, e = lon_w, lon_e
-    if data_0_360:
-        # data in 0..360: map any negative requested bound into 0..360
-        if w < 0:
-            w += 360.0
-        if e < 0:
-            e += 360.0
+    if len(bounds) == 1:
+        out = ds.sel({lon_name: slice(*bounds[0])})
     else:
-        # data in −180..180: map any requested bound above 180 into −180..180
-        if w > 180.0:
-            w -= 360.0
-        if e > 180.0:
-            e -= 360.0
-
-    if w <= e:
-        out = ds.sel({lon_name: slice(w, e)})
-    else:
-        # box wraps the seam (e.g. Atlantic −70..20 -> 290..20 in 0..360)
-        out = xr.concat([ds.sel({lon_name: slice(w, hi)}),
-                         ds.sel({lon_name: slice(lo, e)})], dim=lon_name)
+        out = xr.concat([ds.sel({lon_name: slice(*b)}) for b in bounds],
+                        dim=lon_name)
 
     if out.sizes.get(lon_name, 0) == 0:
         warnings.warn(
             f"Longitude selection [{lon_w}, {lon_e}] returned no cells against a "
             f"source spanning [{lo:.1f}, {hi:.1f}]. Check the longitude convention "
-            f"(the source uses {'0..360' if data_0_360 else '-180..180'}).",
+            f"(the source uses {'0..360' if hi > 180.0 else '-180..180'}).",
             stacklevel=2,
         )
     return out
@@ -378,6 +408,21 @@ def normalize(ds, product_config, variable, region=None, geometry=None,
     fill_value = var_cfg.get("fill_value")
     if fill_value is not None:
         ds[variable] = ds[variable].where(ds[variable] != fill_value)
+
+    # Optional catalog-declared multiplier, applied last of the value transforms.
+    # Its use case is a source whose SIGN convention differs from acmaddl's, not
+    # a unit change: ERA5(-Land) serves potential evaporation as a negative
+    # upward flux, so `obs/era5-land-monthly` pev declares `scale: -1.0` on top
+    # of the m -> mm/day conversion. Runs AFTER the sentinel mask above, so
+    # `fill_value` is still compared against the number the source wrote —
+    # scaling first would turn a -999 sentinel into +999 real-looking data.
+    # Multiplication drops attrs in xarray, so the units label set above is
+    # restored explicitly.
+    scale = var_cfg.get("scale")
+    if scale is not None:
+        _attrs = ds[variable].attrs
+        ds[variable] = ds[variable] * scale
+        ds[variable].attrs = _attrs
 
     if "lat" in ds.dims:
         ds = ds.sortby("lat")

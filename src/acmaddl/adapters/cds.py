@@ -9,6 +9,16 @@ from .._paths import get_tmpdir
 
 
 
+# CDS collections with no `download_format` option; requests to these must not
+# carry the key. Checked against each collection's form.json (2026-09-15).
+NO_DOWNLOAD_FORMAT = frozenset({
+    "seasonal-monthly-single-levels",
+    "seasonal-original-single-levels",
+    "s2s-forecasts",
+    "s2s-reforecasts",
+})
+
+
 class CDSAdapter(AdapterBase):
     def health_check(self, product_config, probe_remote=False):
         required = ["cds_dataset", "variables"]
@@ -75,8 +85,18 @@ class CDSAdapter(AdapterBase):
         request = {
             "variable": var_cfg["native_name"],
             "data_format": "netcdf",
-            "download_format": "unarchived",
         }
+        # `download_format` exists only on the collections that advertise it in
+        # their form.json (the ERA5 family). The seasonal and s2s collections
+        # have no such option, and sending the key anyway makes CDS log
+        # "Download format not supported for this dataset. Defaulting to
+        # as_source." at WARNING on every live request -- which `quiet=True`
+        # does not suppress, because the client's quiet mode is level WARNING,
+        # not silence. The delivered bytes are the same either way (the zip
+        # branch below handles them), so the key is simply omitted where it
+        # means nothing.
+        if dataset not in NO_DOWNLOAD_FORMAT:
+            request["download_format"] = "unarchived"
 
         if dataset in ("s2s-forecasts", "s2s-reforecasts"):
             # Sub-seasonal forecasts have a different request shape than the

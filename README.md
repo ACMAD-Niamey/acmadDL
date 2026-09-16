@@ -129,6 +129,8 @@ acmaddl.check_all_products(probe_remote=True)   # also probe the live source
 
 Each result includes `product`, `adapter`, `healthy`, `kind`, `message`, and `checked_at`.
 
+A source can be healthy and still hand back a corrupt field — every cell fill, every cell zero, a few absurd values. `acmaddl.usable(field, variable="precip")` is the per-field guard for that; run it on each model's returned arrays before calibration and drop a model with a stated reason rather than let the field into the ensemble.
+
 ## Available products
 
 How to read the tables. Hindcast is each model's fixed reforecast period, not a fetch cap: real-time forecasts run past it to the present. Forecast is the live-verified real-time availability, shown as `year–present` (ongoing) or `start–end (retired)` when the pinned system version was superseded (hindcasts still fetch, but no new forecasts issue). Members (F/H) are the real-time-forecast and reforecast ensemble sizes, which differ. `†` marks a deprecated access route. Full field conventions are documented at the top of [`src/acmaddl/catalog.yaml`](src/acmaddl/catalog.yaml).
@@ -191,7 +193,7 @@ empty trailing slots exposed by the upstream endpoint.
 | Product | Model / system | Host | Adapter | Variables | Cadence | Members (F/H) | Hindcast | Forecast |
 |---|---|---|---|---|---|---|---|---|
 | `obs/era5` | - | Copernicus CDS | `cds` | temp, precip, sst | monthly | - | 1940–2025 | - |
-| `obs/era5-land-monthly` | - | Copernicus CDS | `cds` | precip, temp | monthly | - | 1950–2025 | - |
+| `obs/era5-land-monthly` | - | Copernicus CDS | `cds` | precip, temp, pev | monthly | - | 1950–2025 | - |
 
 ### Observation
 
@@ -211,7 +213,11 @@ empty trailing slots exposed by the upstream endpoint.
 | `obs/chirps-v3-monthly` | - | UCSB CHC | `http` | precip | monthly | - | 1981–2025 | - |
 | `obs/chirps-v3-pentad` | - | UCSB CHC | `http` | precip | pentad | - | 1981–2025 | - |
 | `obs/ghcn` | - | Rhiza/Sheerwater | `sheerwater` | precip | monthly | - | 1981–2024 | - |
+| `obs/gpcc-first-guess` | - | DWD open data | `http` | precip | monthly | - | 2013–2026 | - |
+| `obs/gpcc-monitoring-v2020` | - | DWD open data | `http` | precip | monthly | - | 1982–2026 | - |
+| `obs/gpcp-v2-3` | - | NOAA NCEI | `http` | precip | monthly | - | 1979–2026 | - |
 | `obs/imerg` | - | Rhiza/Sheerwater | `sheerwater` | precip | monthly | - | 2000–2024 | - |
+| `obs/oisst-v2-highres` | - | NOAA PSL | `opendap` | sst | monthly | - | 1981–2026 | - |
 
 For `nmme/cfsv2 †`, the model is still an active NMME member (live on CPC FTP); only its IRI Data Library access route is deprecated (IRIDL shutdown around October 2026), with no successor yet.
 

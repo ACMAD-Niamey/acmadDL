@@ -45,6 +45,7 @@ from .cpc_nmme import cpc_nmme_predictor  # noqa: F401
 from .assemble import assemble, obs_predictor
 from .zonal import zonal
 from .health import check_product, check_all_products
+from .validate import usable
 
 __all__ = [
     "catalog",
@@ -58,4 +59,5 @@ __all__ = [
     "obs_predictor",
     "check_product",
     "check_all_products",
+    "usable",
 ]

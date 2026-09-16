@@ -331,3 +331,24 @@ def test_ccsr_temp_units_celsius_not_double_converted(product):
     np.testing.assert_allclose(
         np.sort(vals.ravel()), [-7.0, -5.0, 0.0, 3.0], atol=1e-9
     )
+
+
+# ── Units contract (acmadDL #6) ──────────────────────────────────────────────
+# The CCSR server declares NMME precipitation as `mm/day` ("Precipitation rate",
+# probe-verified 2026-09-08 on COLA-RSMAS/CCSM4/pr). Declaring it `mm` in the
+# catalog made normalize skip the calendar weighting that turns rates into the
+# seasonal-total `mm` contract every other model honours, so CCSR products came
+# back ~30x too low under year_index=True.
+
+from acmaddl import catalog as _catalog  # noqa: E402
+
+
+def test_ccsr_precipitation_is_declared_as_a_daily_rate():
+    ccsr = [p for p in _catalog.list_products(include_deprecated=False)
+            if _catalog.info(p).get("adapter") == "ccsr"
+            and "precip" in (_catalog.info(p).get("variables") or {})]
+    assert ccsr, "no CCSR precipitation products found"
+    for pid in ccsr:
+        v = _catalog.info(pid)["variables"]["precip"]
+        assert v["units"] == "mm/day", f"{pid}: source units must be mm/day (server-declared)"
+        assert v["target_units"] == "mm/day", f"{pid}: rates stay mm/day; year_index collapses to mm"

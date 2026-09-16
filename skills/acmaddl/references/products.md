@@ -51,7 +51,7 @@ A legacy MARS adapter exists as an S2S reforecast-only fallback (needs `~/.ecmwf
 | Product | CDS dataset | Variables | Resolution | Range |
 |---|---|---|---|---|
 | `obs/era5` | reanalysis-era5-single-levels-monthly-means | temp, precip, sst | 0.25° | 1940-2025 |
-| `obs/era5-land-monthly` | reanalysis-era5-land-monthly-means | precip, temp | 0.1° | 1950-2025 (no sst) |
+| `obs/era5-land-monthly` | reanalysis-era5-land-monthly-means | precip, temp, **pev** | 0.1° | 1950-2025 (no sst) |
 
 ## CHIRPS native (UCSB, `http` adapter) — no credentials, heavily rate-limited
 
@@ -85,14 +85,22 @@ Sheerwater reads public GCS anonymously (a benign gcsfs "Could not determine buc
 
 ## NOAA PSL OPeNDAP observations (`opendap` adapter) — no credentials
 
-Whole-file NetCDF served over NOAA PSL's THREDDS/OpenDAP endpoint. Both are chunked by `max_request_years: 5`: the PSL server silently zero-fills (and prints `ERR: DAP DATADDS packet is apparently too short` to stderr) on long requests, so the adapter loads the record in year blocks and validates each. This obs-chunk path runs the **always-on** degenerate-response guard (`reject_all_nan=True`) — a zero-filled *or* all-NaN chunk raises `DegenerateResponseError` before it can be cached.
+Whole-file NetCDF served over NOAA PSL's THREDDS/OpenDAP endpoint. The PSL server silently zero-fills (and prints `ERR: DAP DATADDS packet is apparently too short` to stderr) rather than erroring when a request is one it can't answer, so the adapter requests the record in pieces and validates each. This obs-chunk path runs the **always-on** degenerate-response guard (`reject_all_nan=True`) — a zero-filled *or* all-NaN chunk raises `DegenerateResponseError` before it can be cached.
+
+Two things bound a request, and both are needed (probe-verified 2026-09-02):
+
+- **`max_request_years`** (catalog, 5 for the 2°/2.5° products, 2 for 0.25° OISST) — an upper bound on years per request.
+- **A response-size budget** (4M values, ~half the observed ~32 MiB PSL cap) — because the size of one time step depends on how many cells the region covers, the same year count that is safe at 2° is hopeless at 0.25°. A wide region is therefore split into sub-year requests automatically, so any region size works, global included.
+
+**A seam-crossing region becomes two separate requests.** `select_lon` answers a box spanning the source's longitude seam (e.g. an Africa box -30..60 on a 0..360 grid) by concatenating two slices; done lazily that is a single malformed DAP request, which PSL zero-fills **at every size** — an 80°×90° OISST box truncated even at 230k values, while the same cells loaded fine as one contiguous request. The adapter now plans the segments with `normalize.lon_selection_bounds` and issues one contiguous request per segment, joining the loaded results.
 
 | Product | Variable | Native → canonical | Resolution | Coverage | Notes |
 |---|---|---|---|---|---|
 | `obs/ersst-v5` | sst | `sst` degC → C | 2.0° monthly | ~1954-present | NOAA Extended Reconstructed SST v5. Reference SST for the 1991-2020 WMO baseline (ONI/RONI/IOD verification). Latitude stored N→S upstream; the adapter sorts it ascending. |
 | `obs/cmap` | precip | `precip` mm/day (native) | 2.5° monthly | ~1979-present | CPC Merged Analysis of Precipitation (gauge+satellite), the natively-served NetCDF sibling of the IRIDL-only CAMS-OPI. |
+| `obs/oisst-v2-highres` | sst | `sst` degC → C | 0.25° monthly | Sep 1981-present | NOAA OISST v2.1 (AVHRR-only high-res), the fine-grid sibling of `obs/ersst-v5`. PSL also publishes the whole record as one ~2.2 GB HTTP file; this entry deliberately uses OPeNDAP so requests are subset server-side. `max_request_years: 2`, further tightened by the response-size budget — a global month is ~1.04M cells, 64× ERSST's. Any region size works, global included. |
 
-**GOTCHA (ERSST land mask):** because the obs-chunk guard rejects all-NaN chunks, requesting a **land-only** bbox for `obs/ersst-v5` (an ocean-only SST field) raises `DegenerateResponseError` — the chunk is legitimately all-NaN over land. Request an ocean-containing region.
+**GOTCHA (SST land mask):** because the obs-chunk guard rejects all-NaN chunks, requesting a **land-only** bbox for `obs/ersst-v5` or `obs/oisst-v2-highres` (ocean-only SST fields) raises `DegenerateResponseError` — the chunk is legitimately all-NaN over land. Request an ocean-containing region.
 
 ## TAMSAT (`http` adapter, JASMIN public) — no credentials
 
@@ -101,6 +109,31 @@ Whole-file NetCDF served over NOAA PSL's THREDDS/OpenDAP endpoint. Both are chun
 | `obs/tamsat` | precip | `rfe` → precip, **mm/month** | 0.0375° monthly | ~1983-2025 | TAMSAT v3.1 monthly rainfall estimate (Reading), one NetCDF per (year, month) on JASMIN's public server (`request_interval: 0.5`, `fill_value: -999`). **Africa land-only.** |
 
 TAMSAT keeps `mm/month` totals (`target_units: mm/month`) rather than converting to `mm/day` — check `attrs["units"]` before mixing with rate-based products. The native grid is ~3.7M cells; coarsen (`grid_res=`/`regrid_to=`) before CCA or any dense operation.
+
+## GPCC gauge analyses (`http` adapter, DWD open data) — no credentials
+
+Monthly **gauge-only** 1° analyses from the Global Precipitation Climatology Centre, served as gzipped NetCDF on DWD's open-data server. Gauge-only, so they complement the satellite-merged products (`obs/cmap`, `obs/gpcp-v2-3`) rather than duplicating them.
+
+| Product | Variable | Native → canonical | Resolution | Coverage | Notes |
+|---|---|---|---|---|---|
+| `obs/gpcc-monitoring-v2020` | precip | `p` → precip, **mm/month** | 1.0° monthly | 1982-present (~2-month lag) | The quality-controlled monitoring analysis. Carries seven further fields beside `p` (gauge count `s`, interpolation/gauge errors, solid+liquid fractions) which pass through unused. |
+| `obs/gpcc-first-guess` | precip | `p` → precip, **mm/month** | 1.0° monthly | **2013**-present (~1-month lag) | Near-real-time first guess from far fewer stations; superseded by the monitoring product once it catches up. |
+
+Both keep native monthly **totals** as `mm/month` (the `obs/tamsat` convention) rather than dividing by a flat 30 into a fake daily rate. Latitude is stored north-to-south upstream; normalize sorts it ascending.
+
+**COVERAGE CAVEAT (`obs/gpcc-first-guess`):** the year directories on DWD go back to 2004, but 2004-2012 hold **only** legacy GrADS binaries (`gpcc_first_guess_MM_YYYY.gz`). The `.nc.gz` files this entry fetches begin in **2013**, which is where `hindcast_range` starts. Use `obs/gpcc-monitoring-v2020` for anything earlier.
+
+**Why both declare `time_from_pattern`:** neither in-file time axis is usable as served. `monitoring_v2020` writes `20240301.0` with units `day as %Y%m%d.%f` — a GrADS convention, not CF `"<unit> since <epoch>"`, so nothing decodes it. `first_guess` writes `0` with units `months since 2024-3-1` — unpadded, so `decode_times=True` raises outright, and since every file says `0` against its own reference month, concatenating them without per-file stamping collapses the whole record onto a single date. The adapter therefore takes the `(year, month)` that built each URL as the authority. The files are also gzipped, which the adapter expands before opening.
+
+## GPCP v2.3 (`http` adapter, NOAA NCEI) — no credentials
+
+| Product | Variable | Native → canonical | Resolution | Coverage | Notes |
+|---|---|---|---|---|---|
+| `obs/gpcp-v2-3` | precip | `precip` mm/day (native) | 2.5° monthly | 1979-present (~3-month lag) | Satellite-gauge merged precipitation from the producing archive (NCEI). Native `mm/day`, matching `obs/cmap`. Files carry `precip_error` and CF bounds variables alongside `precip`; the bounds are dropped on the way out. |
+
+NCEI stamps every filename with its processing date (`gpcp_v02r03_monthly_d202403_c20240607.nc`), which no static pattern can predict, so the entry's `file_pattern` ends in a `*` and the adapter resolves it against the directory listing (one listing per year, so a 45-year pull costs 45 listings, not 540). If a month was reprocessed and appears twice, the later `_c<date>` wins.
+
+**GOTCHA (preliminary stream):** the same directory holds a `gpcp_v02r03-preliminary_monthly_…` stream for months the final product hasn't reached yet. The literal part of the pattern excludes it, so `obs/gpcp-v2-3` is always the settled product — a request for a month that only exists as preliminary raises `FileNotFoundError` rather than quietly returning a provisional estimate. Add a separate `-prelim` entry if the current-season tail is ever needed, the way `obs/chirps-v3-dekad-tif` / `-prelim` are paired.
 
 ## CHC CHIRPS-GEFS short-range forecasts (`http` adapter, issuance-keyed) — no credentials
 
@@ -125,6 +158,17 @@ variables:
     target_units: mm/day    # canonical output units
     accumulated: true       # optional: deaccumulate over lead_time
     fill_value: -9999       # optional: masked to NaN
+    scale: -1.0             # optional: multiplier applied AFTER the conversion
+                            # and AFTER fill_value masking. For a source whose
+                            # SIGN convention differs from acmaddl's — ERA5-Land
+                            # pev is a negative upward flux.
 ```
 
 Product-level keys of interest: `adapter`, `grid`, `hindcast`/`forecast` year ranges, split-stream config, `member_reduce`, `request_interval`, `max_workers`, `alias_of`, `deprecated_after`, `successor`, `deprecation_note`, `pending_url`.
+
+Two `http`-adapter keys are worth knowing:
+
+- **`time_from_pattern: true`** — take the time coordinate from the `(year, month)` that built each filename instead of the file's own axis, stamped per file **before** the concat, and skip CF time decoding entirely. For sources whose in-file encoding is undecodable or not self-contained (both GPCC streams). A file holding more than one time step raises rather than being mislabelled.
+- **`*` in `file_pattern`** — resolved against the server's directory listing, for filenames carrying something unpredictable (NCEI's processing-date suffix). No match raises `FileNotFoundError`; several matches take the lexically greatest name.
+
+A `.gz` URL is gunzipped automatically — no key needed, since the suffix is unambiguous.
