@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import hashlib
+import importlib.metadata
 import inspect
 import json
 import os
@@ -35,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
+from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -68,11 +70,34 @@ repeated fetch of the same request is fast.
 Read the acmaddl://skill resource for the full API and product conventions.
 """
 
+# MCP 2026-07-28 requires freshness hints (ttlMs / cacheScope) on every list
+# and read result. Our tool list, resources, and skill text are static for the
+# life of a server process, so clients (and prompt caches in front of them) may
+# hold them for a day; nothing here is per-user, so intermediaries may share.
+def _dist_version(dist: str) -> str:
+    """Identify the server by the installed distribution version (serverInfo)."""
+    try:
+        return importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
+_DAY_MS = 24 * 60 * 60 * 1000
+_CACHE_HINTS = {
+    "tools/list": CacheHint(ttl_ms=_DAY_MS, scope="public"),
+    "prompts/list": CacheHint(ttl_ms=_DAY_MS, scope="public"),
+    "resources/list": CacheHint(ttl_ms=_DAY_MS, scope="public"),
+    "resources/templates/list": CacheHint(ttl_ms=_DAY_MS, scope="public"),
+    "resources/read": CacheHint(ttl_ms=60 * 60 * 1000, scope="public"),
+}
+
 mcp = MCPServer(
     name="acmaddl",
     title="acmadDL climate data",
     instructions=_INSTRUCTIONS,
-    version=getattr(acmaddl, "__version__", ""),
+    version=_dist_version("acmadDL"),
+    website_url="https://github.com/ACMAD-Niamey/acmadDL",
+    cache_hints=_CACHE_HINTS,
 )
 
 
@@ -593,11 +618,31 @@ def fetch(
 
 
 class _Jobs:
-    """Minimal in-process job table for background fetches."""
+    """Job table for background fetches, persisted as JSON under the workdir.
+
+    MCP 2026-07-28 removed protocol sessions: cross-call state must travel as
+    server-minted handles in ordinary tool arguments. ``job_id`` is that
+    handle. Records live on disk (``<workdir>/jobs/<job_id>.json``) rather
+    than in process memory so any server process can answer ``fetch_status``
+    for them, which is what a stateless HTTP deployment needs. The fetch
+    itself still runs on a thread of the process that accepted it.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._jobs: dict[str, dict] = {}
+
+    @staticmethod
+    def _dir() -> Path:
+        d = workdir() / "jobs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _write(self, record: dict) -> None:
+        path = self._dir() / f"{record['job_id']}.json"
+        tmp = path.with_suffix(".json.tmp")
+        with self._lock:
+            tmp.write_text(json.dumps(_json_safe(record)))
+            os.replace(tmp, path)
 
     def submit(self, fn, *args) -> str:
         job_id = uuid.uuid4().hex[:12]
@@ -606,33 +651,34 @@ class _Jobs:
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None, "result": None, "error": None,
         }
-        with self._lock:
-            self._jobs[job_id] = record
+        self._write(record)
 
         def _target():
             try:
                 result = fn(*args)
-                with self._lock:
-                    record.update(status="done", result=result)
+                record.update(status="done", result=result)
             except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    record.update(status="error", error=str(exc),
-                                  traceback=traceback.format_exc(limit=5))
+                record.update(status="error", error=str(exc),
+                              traceback=traceback.format_exc(limit=5))
             finally:
-                with self._lock:
-                    record["finished_at"] = datetime.now(timezone.utc).isoformat()
+                record["finished_at"] = datetime.now(timezone.utc).isoformat()
+                self._write(record)
 
         threading.Thread(target=_target, name=f"acmaddl-mcp-{job_id}", daemon=True).start()
         return job_id
 
     def get(self, job_id: str) -> dict | None:
-        with self._lock:
-            record = self._jobs.get(job_id)
-            return dict(record) if record else None
+        path = self._dir() / f"{job_id}.json"
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text())
 
     def all(self) -> list[dict]:
-        with self._lock:
-            return [{k: v for k, v in r.items() if k != "result"} for r in self._jobs.values()]
+        records = []
+        for path in sorted(self._dir().glob("*.json")):
+            record = json.loads(path.read_text())
+            records.append({k: v for k, v in record.items() if k != "result"})
+        return records
 
 
 _jobs = _Jobs()
@@ -678,7 +724,9 @@ def start_fetch(
 def fetch_status(
     job_id: Annotated[str, Field(description="The job_id returned by start_fetch.")],
 ) -> JobStatus:
-    """Status of a start_fetch job.
+    """Status of a start_fetch job. Handles persist under the workdir, so they
+    remain valid across server restarts (a job interrupted by a restart stays
+    "running"; start it again).
 
     Returns: {job_id, status: "running" | "done" | "error", started_at,
     finished_at, result (the fetch summary when done), error (message when failed)}.
@@ -692,7 +740,7 @@ def fetch_status(
 
 @tool(read_only=True)
 def list_jobs() -> list[dict[str, Any]]:
-    """All start_fetch jobs in this server process, without their results.
+    """All start_fetch jobs recorded under the workdir, without their results.
 
     Returns: a list of {job_id, status, started_at, finished_at, error}.
     """
@@ -800,14 +848,21 @@ def catalog_resource() -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="acmaddl-mcp", description="Run the acmaddl MCP server.")
-    parser.add_argument("--transport", choices=["stdio", "streamable-http", "sse"], default="stdio")
+    # HTTP+SSE is deprecated in MCP 2026-07-28; only stdio and Streamable HTTP are offered.
+    parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--stateless", action="store_true",
+                        help="Streamable HTTP without server-side session state (safe: job "
+                             "handles are persisted under the workdir).")
+    parser.add_argument("--json-response", action="store_true",
+                        help="Streamable HTTP: reply with plain JSON instead of an event stream.")
     args = parser.parse_args(argv)
     if args.transport == "stdio":
         mcp.run("stdio")
     else:
-        mcp.run(args.transport, host=args.host, port=args.port)
+        mcp.run("streamable-http", host=args.host, port=args.port,
+                stateless_http=args.stateless, json_response=args.json_response)
 
 
 if __name__ == "__main__":

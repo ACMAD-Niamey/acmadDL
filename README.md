@@ -291,8 +291,10 @@ acmadDL ships a [Model Context Protocol](https://modelcontextprotocol.io) server
 ```bash
 pip install 'acmadDL[mcp]'
 acmaddl-mcp                     # stdio transport (what MCP clients spawn)
-acmaddl-mcp --transport streamable-http --port 8000
+acmaddl-mcp --transport streamable-http --port 8000 --stateless
 ```
+
+The server implements MCP protocol revision 2026-07-28 (via the `mcp` 2.x SDK): stateless core, `server/discover`, cache freshness hints on list results, and Streamable HTTP as the only network transport (HTTP+SSE is deprecated). Background fetch handles (`start_fetch` job ids) are persisted under the workdir, so `--stateless` HTTP deployments and server restarts keep them valid.
 
 Register it with a client, for example in Claude Code:
 
