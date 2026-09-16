@@ -22,7 +22,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - run: uv sync --extra dev
+      - run: uv sync --extra dev --extra mcp --extra geo
       - run: uv run pytest -m "not network and not integration and not cds" -q
 
   publish:

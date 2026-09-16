@@ -57,9 +57,13 @@ demo = ["matplotlib", "cartopy", "rasterio"]
 # is already a core dep and rasterio rides in with it; geopandas is the only
 # genuinely new requirement, kept optional because its stack is heavy.
 geo = ["geopandas", "rasterio"]
+# MCP server (`acmaddl-mcp`): exposes the catalog, health checks, fetch, and
+# zonal as Model Context Protocol tools for AI agents. See README "MCP server".
+mcp = ["mcp>=1.2"]
 
 [project.scripts]
 acmaddl = "acmaddl.cli:cli"
+acmaddl-mcp = "acmaddl.mcp.server:main"
 
 [tool.uv]
 # sheerwater's metadata hard-pins zarr==2.18.3, which blocks icechunk (needs

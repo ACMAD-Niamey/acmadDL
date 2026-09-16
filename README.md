@@ -284,6 +284,28 @@ acmaddl cache clear                       # clear everything
 acmaddl cache clear --product nmme/cfsv2  # clear one product (with confirmation)
 ```
 
+## MCP server
+
+acmadDL ships a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents (Claude Code, Beaker, Codex, and any other MCP client) can browse the catalog, check product health, and fetch data as tools.
+
+```bash
+pip install 'acmadDL[mcp]'
+acmaddl-mcp                     # stdio transport (what MCP clients spawn)
+acmaddl-mcp --transport streamable-http --port 8000 --stateless
+```
+
+The server implements MCP protocol revision 2026-07-28 (via the `mcp` 2.x SDK): stateless core, `server/discover`, cache freshness hints on list results, and Streamable HTTP as the only network transport (HTTP+SSE is deprecated). Background fetch handles (`start_fetch` job ids) are persisted under the workdir, so `--stateless` HTTP deployments and server restarts keep them valid.
+
+Register it with a client, for example in Claude Code:
+
+```bash
+claude mcp add acmaddl -- acmaddl-mcp
+```
+
+Tools: `list_products`, `describe_product`, `check_product`, `check_all_products`, `fetch`, `start_fetch` / `fetch_status` / `list_jobs` (background fetch for slow CDS queues), `describe_dataset`, and `zonal`. Arrays never cross the protocol: `fetch` and `zonal` write NetCDF under `ACMADDL_MCP_WORKDIR` (default `~/.acmaddl/mcp`) and return the path plus a compact summary, which downstream tools such as the [africas2s](https://github.com/ACMAD-Niamey/africas2s) MCP server accept by path. The Agent Skill and catalog are also exposed as resources (`acmaddl://skill`, `acmaddl://skill/references/{name}`, `acmaddl://catalog`).
+
+The server is a thin wrapper over the public API, so credentials, caching, and product behaviour are exactly as documented above. Inspect it interactively with `npx @modelcontextprotocol/inspector acmaddl-mcp`.
+
 ## Development setup
 
 ```bash

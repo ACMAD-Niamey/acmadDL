@@ -13,7 +13,8 @@ compatibility: Requires Python 3.12+. Network access to data providers; some pro
 acmadDL is ACCORD's data adapter layer for seasonal climate forecasting. One call — `fetch()` — retrieves data from many providers (Copernicus CDS, ECMWF Data Store, OPeNDAP/IRI, HTTP, S3, Sheerwater/GCS, CCSR) and returns a **normalized xarray Dataset** with canonical variable names, units, and coordinates. Data stays at the source; acmaddl hosts no central copy.
 
 - Install: `pip install acmadDL` — **import name is `acmaddl`**, not `acmadDL`.
-- Extras: `[geo]` (shapefile/geometry regions), `[s3]`, `[icechunk]`, `[demo]` (plotting), `[dev]`.
+- Extras: `[geo]` (shapefile/geometry regions), `[s3]`, `[icechunk]`, `[demo]` (plotting), `[dev]`, `[mcp]` (MCP server).
+- MCP server: `pip install 'acmadDL[mcp]'` then `acmaddl-mcp` (stdio). Tools mirror this API (`list_products`, `describe_product`, `check_product`, `fetch`, `start_fetch`/`fetch_status`, `describe_dataset`, `zonal`); data is exchanged as NetCDF paths under `ACMADDL_MCP_WORKDIR` (default `~/.acmaddl/mcp`). If you are talking to acmaddl through MCP rather than Python, the same product ids, parameters, and conventions apply.
 - Downstream: acmaddl feeds normalized xarray into **deepscale** (downscaling/forecasting); the interface is plain xarray, no hard coupling.
 
 ## Canonical output schema (what every fetch returns)

@@ -22,6 +22,8 @@ The skill is a snapshot of the source. Any change that alters observable behavio
 | Degenerate-response guard (`_robust.reject_if_degenerate`, `DegenerateResponseError`, opt-in vs always-on) | `skills/acmaddl/references/troubleshooting.md` + `api.md` (`degenerate_attempts`) |
 | Caching (`_CACHE_VERSION`, cache keys, env vars, nuthatch config) | `skills/acmaddl/references/troubleshooting.md` |
 | Credentials/adapters (new source, auth flow, rate limits) | `skills/acmaddl/references/products.md` + `troubleshooting.md` |
+| MCP server (`src/acmaddl/mcp/server.py`: tools, resources, workdir/env vars, output naming) | `README.md` "MCP server" + `skills/acmaddl/SKILL.md` ("MCP server" note) + `tests/test_mcp_server.py` |
+| Public API changes above that the MCP server wraps (`fetch`/`zonal` params, catalog/health return shapes) | `src/acmaddl/mcp/server.py` tool signatures/docstrings, if the tool exposes the changed parameter |
 | Anything user-facing | `README.md` if it covers the topic |
 
 Also update `skills/acmaddl/examples/` if a change breaks or obsoletes an example. If you are unsure whether a change is documented, grep `skills/` and `README.md` for the function, product id, or parameter you touched — stale docs are treated as bugs.
@@ -32,3 +34,4 @@ Also update `skills/acmaddl/examples/` if a change breaks or obsoletes an exampl
 - Tests: `pytest` for the unit suite; markers `integration`, `cds`, `network` gate live-network tests. New behavior needs tests.
 - Caching lives only in `fetch._fetch_raw_cached` — never add `@cache` decorators inside adapters. Bump `_CACHE_VERSION` when adapter logic or normalization changes output.
 - The catalog is declarative: prefer adding/adjusting `catalog.yaml` entries over special-casing code paths.
+- The MCP server (`acmaddl-mcp`, `src/acmaddl/mcp/`, extra `[mcp]`) is a thin wrapper: tools call the public verbs and add no behaviour. Data crosses the protocol as NetCDF paths, never arrays. Re-raise library errors as `ToolError` so agents see the message. Tests in `tests/test_mcp_server.py` run with no network.
