@@ -26,22 +26,34 @@ __all__ = ["show_datasets"]
 
 _CATALOG_PATH = Path(__file__).parent / "catalog.yaml"
 
-# (section, subcategory) taxonomy. Observations stand alone; forecasts split
-# at the top level into seasonal vs sub-seasonal, then by producing family.
-_OBS_COLOR = "#2f7ed8"
+# (section, subcategory) taxonomy. Observations split by variable class;
+# forecasts split at the top level into seasonal vs sub-seasonal, then by
+# producing family.
 _GROUP_COLOR = {                        # black = the smallest group (CHC)
+    ("Observations", "Precipitation"): "#2f7ed8",                # blue
+    ("Observations", "Sea-surface temperature"): "#0e8f8f",      # teal
+    ("Observations", "Reanalysis (multi-variable)"): "#5c6bc0",  # slate
     ("Seasonal forecasts", "C3S / Copernicus"): "#d62728",       # red
     ("Seasonal forecasts", "NMME"): "#d4a500",                   # yellow
     ("Sub-seasonal forecasts", "C3S / Copernicus"): "#2ca02c",   # green
     ("Sub-seasonal forecasts", "CHC forecasts"): "#1a1a1a",      # black
 }
-_SUBCAT_ORDER = ["C3S / Copernicus", "NMME", "CHC forecasts"]
+_SUBCAT_ORDER = ["Precipitation", "Sea-surface temperature",
+                 "Reanalysis (multi-variable)",
+                 "C3S / Copernicus", "NMME", "CHC forecasts"]
 
 
-def _classify(name):
-    """(section, subcategory) for a product id; observations get (None) subcat."""
+def _classify(name, entry=None):
+    """(section, subcategory) for a product id."""
     if name.startswith("obs/"):
-        return "Observations", None
+        vs = set((entry or {}).get("variables") or {})
+        if len(vs) > 1:
+            subcat = "Reanalysis (multi-variable)"
+        elif vs == {"sst"}:
+            subcat = "Sea-surface temperature"
+        else:
+            subcat = "Precipitation"
+        return "Observations", subcat
     sub = (name.endswith("-daily") or name.endswith("-s2s")
            or name.startswith("chc/"))
     section = "Sub-seasonal forecasts" if sub else "Seasonal forecasts"
@@ -106,11 +118,10 @@ def _collect():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 if info(name).get("deprecated"):
                     continue
-        section, subcat = _classify(name)
+        section, subcat = _classify(name, entry)
         out.append((section, subcat, name, entry))
     sec_order = {"Observations": 0, "Seasonal forecasts": 1, "Sub-seasonal forecasts": 2}
-    out.sort(key=lambda e: (sec_order[e[0]],
-                            _SUBCAT_ORDER.index(e[1]) if e[1] else -1, e[2]))
+    out.sort(key=lambda e: (sec_order[e[0]], _SUBCAT_ORDER.index(e[1]), e[2]))
     return out
 
 
@@ -163,7 +174,7 @@ def show_datasets(which="both", save=None):
             rows.append(("header", section))
             heights.append(HEADER)
             last_sec, last_sub = section, None
-        if subcat is not None and subcat != last_sub:
+        if subcat != last_sub:
             rows.append(("subheader", subcat))
             heights.append(SUBHEADER)
             last_sub = subcat
@@ -197,13 +208,12 @@ def show_datasets(which="both", save=None):
                      fontweight="bold", style="italic", color="0.25")
             continue
         section, subcat, name, entry = payload
-        x_id = 0.045 if subcat is None else 0.06
-        fig.text(x_id, (y + h - 0.15) / total, name, fontsize=8.5,
+        fig.text(0.06, (y + h - 0.15) / total, name, fontsize=8.5,
                  fontweight="bold")
-        fallback = ("sub-seasonal (daily, init/lead)"
-                    if section == "Sub-seasonal forecasts"
-                    else "seasonal (init/lead)")
-        fig.text(x_id, (y + h - 0.28) / total, _meta_line(entry, fallback),
+        fallback = {"Observations": "monthly",
+                    "Sub-seasonal forecasts": "sub-seasonal (daily, init/lead)",
+                    }.get(section, "seasonal (init/lead)")
+        fig.text(0.06, (y + h - 0.28) / total, _meta_line(entry, fallback),
                  fontsize=6.5, color="0.4")
         ax = fig.add_axes([TL_X0, (y + 0.075) / total, TL_W, 0.16 / total])
         ax.set_xlim(_YEAR_MIN, _YEAR_MAX)
@@ -217,9 +227,9 @@ def show_datasets(which="both", save=None):
         ax.tick_params(length=0, pad=1)
         for s in ax.spines.values():
             s.set_visible(False)
-        color = _OBS_COLOR if subcat is None else _GROUP_COLOR[(section, subcat)]
+        color = _GROUP_COLOR[(section, subcat)]
         rng = (entry.get("grid") or {}).get("hindcast_range")
-        is_fcst = subcat is not None
+        is_fcst = section != "Observations"
         if rng:
             y0, y1 = rng
             ax.axvspan(y0, y1 + 1, ymin=0.28, ymax=0.92, color=color, alpha=0.85)

@@ -33,6 +33,12 @@ def test_collect_covers_every_live_product():
     assert _classify("c3s/ecmwf-s2s") == ("Sub-seasonal forecasts", "C3S / Copernicus")
     assert _classify("chc/chirps-gefs-15day") == ("Sub-seasonal forecasts", "CHC forecasts")
     assert _classify("nmme/ccsm4") == ("Seasonal forecasts", "NMME")
+    assert _classify("obs/chirps-v3-daily", {"variables": {"precip": {}}}) == (
+        "Observations", "Precipitation")
+    assert _classify("obs/ersst-v5", {"variables": {"sst": {}}}) == (
+        "Observations", "Sea-surface temperature")
+    assert _classify("obs/era5", {"variables": {"temp": {}, "precip": {}, "sst": {}}}) == (
+        "Observations", "Reanalysis (multi-variable)")
     assert _classify("c3s/ecmwf") == ("Seasonal forecasts", "C3S / Copernicus")
 
 
