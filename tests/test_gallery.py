@@ -7,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import yaml
 
-from acmaddl.gallery import _CATALOG_PATH, _SECTIONS, _collect, _meta_line, _source, show_datasets, main
+from acmaddl.gallery import _CATALOG_PATH, _classify, _collect, _meta_line, _source, show_datasets, main
 
 
 def _raw():
@@ -16,7 +16,7 @@ def _raw():
 
 def test_collect_covers_every_live_product():
     raw = _raw()
-    names = {n for _, n, _ in _collect()}
+    names = {n for _, _, n, _ in _collect()}
     aliases = {k for k, v in raw.items() if "alias_of" in v}
     assert not (names & aliases)
     # every non-alias product either appears or is date-deprecated
@@ -25,10 +25,15 @@ def test_collect_covers_every_live_product():
             continue
         if k not in names:
             assert v.get("deprecated_after"), f"{k} missing without deprecation"
-    # section order: families appear in declared order
-    fams = [f for f, _, _ in _collect()]
-    firsts = sorted(set(fams), key=fams.index)
-    assert firsts == [f for f, _ in _SECTIONS if f in firsts]
+    # section order + taxonomy
+    secs = [s for s, _, _, _ in _collect()]
+    firsts = sorted(set(secs), key=secs.index)
+    assert firsts == ["Observations", "Seasonal forecasts", "Sub-seasonal forecasts"]
+    assert _classify("c3s/dwd-daily") == ("Sub-seasonal forecasts", "C3S / Copernicus")
+    assert _classify("c3s/ecmwf-s2s") == ("Sub-seasonal forecasts", "C3S / Copernicus")
+    assert _classify("chc/chirps-gefs-15day") == ("Sub-seasonal forecasts", "CHC forecasts")
+    assert _classify("nmme/ccsm4") == ("Seasonal forecasts", "NMME")
+    assert _classify("c3s/ecmwf") == ("Seasonal forecasts", "C3S / Copernicus")
 
 
 def test_meta_line_and_source():
@@ -47,7 +52,7 @@ def test_show_datasets_all_one_axes_per_product(tmp_path):
     try:
         assert len(fig.axes) == len(_collect())
         titles = " ".join(t.get_text() for t in fig.texts)
-        for _, name, _ in _collect():
+        for _, _, name, _ in _collect():
             assert name in titles
         assert (tmp_path / "d.png").exists()
     finally:
@@ -58,7 +63,7 @@ def test_default_renders_two_pages(tmp_path):
     figs = show_datasets(save=tmp_path / "d.png")
     try:
         assert len(figs) == 2
-        n_obs = sum(1 for f, _, _ in _collect() if f == "obs")
+        n_obs = sum(1 for s, _, _, _ in _collect() if s == "Observations")
         n_fc = len(_collect()) - n_obs
         assert len(figs[0].axes) == n_obs
         assert len(figs[1].axes) == n_fc

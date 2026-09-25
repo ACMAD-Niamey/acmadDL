@@ -26,13 +26,32 @@ __all__ = ["show_datasets"]
 
 _CATALOG_PATH = Path(__file__).parent / "catalog.yaml"
 
-_SECTIONS = (
-    ("obs", "Observations"),
-    ("nmme", "NMME seasonal forecasts"),
-    ("c3s", "C3S / Copernicus seasonal & sub-seasonal"),
-    ("chc", "CHC forecasts"),
-)
-_SECTION_COLOR = {"obs": "#2f7ed8", "nmme": "#31a354", "c3s": "#e6842a", "chc": "#8e6bb8"}
+# (section, subcategory) taxonomy. Observations stand alone; forecasts split
+# at the top level into seasonal vs sub-seasonal, then by producing family.
+_OBS_COLOR = "#2f7ed8"
+_GROUP_COLOR = {                        # black = the smallest group (CHC)
+    ("Seasonal forecasts", "C3S / Copernicus"): "#d62728",       # red
+    ("Seasonal forecasts", "NMME"): "#d4a500",                   # yellow
+    ("Sub-seasonal forecasts", "C3S / Copernicus"): "#2ca02c",   # green
+    ("Sub-seasonal forecasts", "CHC forecasts"): "#1a1a1a",      # black
+}
+_SUBCAT_ORDER = ["C3S / Copernicus", "NMME", "CHC forecasts"]
+
+
+def _classify(name):
+    """(section, subcategory) for a product id; observations get (None) subcat."""
+    if name.startswith("obs/"):
+        return "Observations", None
+    sub = (name.endswith("-daily") or name.endswith("-s2s")
+           or name.startswith("chc/"))
+    section = "Sub-seasonal forecasts" if sub else "Seasonal forecasts"
+    if name.startswith("chc/"):
+        subcat = "CHC forecasts"
+    elif name.startswith("nmme/"):
+        subcat = "NMME"
+    else:
+        subcat = "C3S / Copernicus"
+    return section, subcat
 
 _ADAPTER_LABEL = {
     "ccsr": "CCSR (Columbia)",
@@ -55,7 +74,7 @@ def _source(entry):
     return _ADAPTER_LABEL.get(a, a)
 
 
-def _meta_line(entry):
+def _meta_line(entry, cadence_fallback="seasonal (init/lead)"):
     g = entry.get("grid") or {}
     parts = [_source(entry)]
     vs = entry.get("variables") or {}
@@ -65,36 +84,42 @@ def _meta_line(entry):
             for n, d in vs.items()))
     if g.get("lat_res") is not None:
         parts.append(f"{g['lat_res']:g}\N{DEGREE SIGN}")
-    cadence = g.get("temporal") or "seasonal (init/lead)"
+    cadence = g.get("temporal") or cadence_fallback
     parts.append(cadence)
     return "  ·  ".join(parts)
 
 
 def _collect():
-    """[(family, name, entry)] for every non-alias, non-deprecated product,
-    in section order then by name."""
+    """[(section, subcat, name, entry)] for every non-alias, non-deprecated
+    product: Observations first, then Seasonal forecasts (C3S, NMME), then
+    Sub-seasonal forecasts (C3S, CHC); by name within a group."""
     raw = yaml.safe_load(_CATALOG_PATH.read_text())
     from .catalog import info
     out = []
-    for fam, _title in _SECTIONS:
-        for name in sorted(k for k in raw if k.startswith(fam + "/")):
-            if "alias_of" in raw[name]:
-                continue
-            entry = dict(raw[name])
-            if entry.get("deprecated_after"):
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    if info(name).get("deprecated"):
-                        continue
-            out.append((fam, name, entry))
+    for name in raw:
+        if "alias_of" in raw[name]:
+            continue
+        entry = dict(raw[name])
+        if entry.get("deprecated_after"):
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                if info(name).get("deprecated"):
+                    continue
+        section, subcat = _classify(name)
+        out.append((section, subcat, name, entry))
+    sec_order = {"Observations": 0, "Seasonal forecasts": 1, "Sub-seasonal forecasts": 2}
+    out.sort(key=lambda e: (sec_order[e[0]],
+                            _SUBCAT_ORDER.index(e[1]) if e[1] else -1, e[2]))
     return out
 
 
 _PAGES = {
-    "observations": (("obs",), "acmadDL catalogued datasets \u2014 observations"),
-    "forecasts": (("nmme", "c3s", "chc"), "acmadDL catalogued datasets \u2014 forecast systems"),
-    "all": (("obs", "nmme", "c3s", "chc"), "acmadDL catalogued datasets"),
+    "observations": (("Observations",), "acmadDL catalogued datasets \u2014 observations"),
+    "forecasts": (("Seasonal forecasts", "Sub-seasonal forecasts"),
+                  "acmadDL catalogued datasets \u2014 forecast systems"),
+    "all": (("Observations", "Seasonal forecasts", "Sub-seasonal forecasts"),
+            "acmadDL catalogued datasets"),
 }
 
 
@@ -130,22 +155,29 @@ def show_datasets(which="both", save=None):
 
     entries = [e for e in _collect() if e[0] in fams]
 
-    HEADER, ROW = 0.40, 0.335
+    HEADER, SUBHEADER, ROW = 0.40, 0.28, 0.335
     heights, rows = [], []
-    last = None
-    for fam, name, entry in entries:
-        if fam != last:
-            rows.append(("header", dict(_SECTIONS)[fam]))
+    last_sec = last_sub = None
+    for section, subcat, name, entry in entries:
+        if section != last_sec:
+            rows.append(("header", section))
             heights.append(HEADER)
-            last = fam
-        rows.append(("row", (fam, name, entry)))
+            last_sec, last_sub = section, None
+        if subcat is not None and subcat != last_sub:
+            rows.append(("subheader", subcat))
+            heights.append(SUBHEADER)
+            last_sub = subcat
+        rows.append(("row", (section, subcat, name, entry)))
         heights.append(ROW)
     total = sum(heights) + 1.0
     fig = plt.figure(figsize=(10.5, total))
     fig.suptitle(title, fontsize=13, fontweight="bold",
                  y=1 - 0.12 / total)
-    fig.text(0.695, 1 - 0.42 / total, "temporal coverage (hindcast range)",
-             fontsize=7.5, color="0.35", ha="center")
+    fig.text(0.695, 1 - 0.42 / total,
+             "temporal coverage — solid: hindcast archive · "
+             "dashed ▸: operational forecasts to present · "
+             "live/rolling: no fixed archive",
+             fontsize=7, color="0.35", ha="center")
 
     TL_X0, TL_W = 0.46, 0.47                    # timeline column
     yr = lambda v: (v - _YEAR_MIN) / (_YEAR_MAX - _YEAR_MIN)
@@ -160,11 +192,19 @@ def show_datasets(which="both", save=None):
                                         transform=fig.transFigure,
                                         color="0.75", linewidth=0.8))
             continue
-        fam, name, entry = payload
-        fig.text(0.045, (y + h - 0.15) / total, name, fontsize=8.5,
+        if rtype == "subheader":
+            fig.text(0.045, (y + 0.07) / total, payload, fontsize=9.5,
+                     fontweight="bold", style="italic", color="0.25")
+            continue
+        section, subcat, name, entry = payload
+        x_id = 0.045 if subcat is None else 0.06
+        fig.text(x_id, (y + h - 0.15) / total, name, fontsize=8.5,
                  fontweight="bold")
-        fig.text(0.045, (y + h - 0.28) / total, _meta_line(entry), fontsize=6.5,
-                 color="0.4")
+        fallback = ("sub-seasonal (daily, init/lead)"
+                    if section == "Sub-seasonal forecasts"
+                    else "seasonal (init/lead)")
+        fig.text(x_id, (y + h - 0.28) / total, _meta_line(entry, fallback),
+                 fontsize=6.5, color="0.4")
         ax = fig.add_axes([TL_X0, (y + 0.075) / total, TL_W, 0.16 / total])
         ax.set_xlim(_YEAR_MIN, _YEAR_MAX)
         ax.set_ylim(0, 1)
@@ -177,9 +217,9 @@ def show_datasets(which="both", save=None):
         ax.tick_params(length=0, pad=1)
         for s in ax.spines.values():
             s.set_visible(False)
-        color = _SECTION_COLOR[fam]
+        color = _OBS_COLOR if subcat is None else _GROUP_COLOR[(section, subcat)]
         rng = (entry.get("grid") or {}).get("hindcast_range")
-        is_fcst = fam in ("nmme", "c3s", "chc")
+        is_fcst = subcat is not None
         if rng:
             y0, y1 = rng
             ax.axvspan(y0, y1 + 1, ymin=0.28, ymax=0.92, color=color, alpha=0.85)
