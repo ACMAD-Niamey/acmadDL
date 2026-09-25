@@ -9,6 +9,32 @@ def cli():
     """acmadDL — climate data integration CLI."""
 
 
+@cli.command("datasets")
+@click.argument("output", required=False, type=click.Path())
+def datasets(output):
+    """Render the one-page dataset catalogue (needs matplotlib).
+
+    With OUTPUT, write the figure there; otherwise open a window.
+    """
+    try:
+        from .gallery import show_datasets
+        import matplotlib
+    except ImportError as e:
+        raise click.ClickException(
+            f"rendering needs matplotlib (pip install 'acmadDL[demo]'): {e}")
+    if output:
+        from pathlib import Path as _P
+        show_datasets(save=output)
+        sp = _P(output)
+        suffix = sp.suffix or ".png"
+        for page in ("observations", "forecasts"):
+            click.echo("wrote " + str(sp.with_name(sp.stem + "-" + page + suffix)))
+    else:
+        import matplotlib.pyplot as plt
+        show_datasets()
+        plt.show()
+
+
 @cli.group()
 def cache():
     """Inspect and manage the local Nuthatch cache."""
