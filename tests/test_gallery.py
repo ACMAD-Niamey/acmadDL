@@ -42,8 +42,8 @@ def test_meta_line_and_source():
     assert "seasonal (init/lead)" in _meta_line(e2)
 
 
-def test_show_datasets_one_axes_per_product(tmp_path):
-    fig = show_datasets(save=tmp_path / "d.png")
+def test_show_datasets_all_one_axes_per_product(tmp_path):
+    fig = show_datasets(which="all", save=tmp_path / "d.png")
     try:
         assert len(fig.axes) == len(_collect())
         titles = " ".join(t.get_text() for t in fig.texts)
@@ -54,9 +54,29 @@ def test_show_datasets_one_axes_per_product(tmp_path):
         plt.close(fig)
 
 
-def test_main_writes_file(tmp_path, capsys):
+def test_default_renders_two_pages(tmp_path):
+    figs = show_datasets(save=tmp_path / "d.png")
+    try:
+        assert len(figs) == 2
+        n_obs = sum(1 for f, _, _ in _collect() if f == "obs")
+        n_fc = len(_collect()) - n_obs
+        assert len(figs[0].axes) == n_obs
+        assert len(figs[1].axes) == n_fc
+        assert (tmp_path / "d-observations.png").exists()
+        assert (tmp_path / "d-forecasts.png").exists()
+    finally:
+        plt.close("all")
+
+
+def test_which_validation():
+    with pytest.raises(ValueError):
+        show_datasets(which="nope")
+
+
+def test_main_writes_two_files(tmp_path, capsys):
     out = tmp_path / "sheet.png"
     main([str(out)])
-    assert out.exists()
-    assert str(out) in capsys.readouterr().out
+    assert (tmp_path / "sheet-observations.png").exists()
+    assert (tmp_path / "sheet-forecasts.png").exists()
+    assert "sheet-forecasts.png" in capsys.readouterr().out
     plt.close("all")

@@ -91,19 +91,44 @@ def _collect():
     return out
 
 
-def show_datasets(save=None):
-    """Render the one-page dataset catalogue.
+_PAGES = {
+    "observations": (("obs",), "acmadDL catalogued datasets \u2014 observations"),
+    "forecasts": (("nmme", "c3s", "chc"), "acmadDL catalogued datasets \u2014 forecast systems"),
+    "all": (("obs", "nmme", "c3s", "chc"), "acmadDL catalogued datasets"),
+}
 
-    Sections by source family; per product: id, source, variables (units),
-    resolution and cadence, plus a coverage bar over a shared 1980-2028 year
-    axis (the catalog ``hindcast_range``; forecast products carry an arrow cap
-    for their ongoing forecast stream; live/rolling products draw an open
-    marker). ``save``: optional path to also write the figure to.
-    Returns the Matplotlib figure.
+
+def show_datasets(which="both", save=None):
+    """Render the dataset catalogue.
+
+    ``which``: ``"both"`` (default) renders TWO figures \u2014 observations and
+    forecast systems \u2014 returned as a tuple (with ``save`` given, the files
+    gain ``-observations`` / ``-forecasts`` suffixes). Or pass
+    ``"observations"``, ``"forecasts"`` or ``"all"`` (the single long sheet)
+    for one figure.
+
+    Per product: id, source, variables (units), resolution and cadence, plus
+    a coverage bar over a shared 1980-2028 year axis (the catalog
+    ``hindcast_range``; forecast products carry an arrow cap for their ongoing
+    forecast stream; live/rolling products draw an open marker).
     """
+    if which == "both":
+        figs = []
+        for page in ("observations", "forecasts"):
+            target = None
+            if save:
+                sp = Path(save)
+                target = sp.with_name(sp.stem + "-" + page + (sp.suffix or ".png"))
+            figs.append(show_datasets(which=page, save=target))
+        return tuple(figs)
+    if which not in _PAGES:
+        raise ValueError(
+            f"which must be 'both', 'observations', 'forecasts' or 'all'; got {which!r}")
+    fams, title = _PAGES[which]
+
     import matplotlib.pyplot as plt
 
-    entries = _collect()
+    entries = [e for e in _collect() if e[0] in fams]
 
     HEADER, ROW = 0.40, 0.335
     heights, rows = [], []
@@ -117,7 +142,7 @@ def show_datasets(save=None):
         heights.append(ROW)
     total = sum(heights) + 1.0
     fig = plt.figure(figsize=(10.5, total))
-    fig.suptitle("acmadDL catalogued datasets", fontsize=13, fontweight="bold",
+    fig.suptitle(title, fontsize=13, fontweight="bold",
                  y=1 - 0.12 / total)
     fig.text(0.695, 1 - 0.42 / total, "temporal coverage (hindcast range)",
              fontsize=7.5, color="0.35", ha="center")
@@ -178,7 +203,10 @@ def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
     if args:
         show_datasets(save=args[0])
-        print(f"wrote {args[0]}")
+        sp = Path(args[0])
+        suffix = sp.suffix or ".png"
+        for page in ("observations", "forecasts"):
+            print("wrote " + str(sp.with_name(sp.stem + "-" + page + suffix)))
     else:
         import matplotlib.pyplot as plt
         show_datasets()

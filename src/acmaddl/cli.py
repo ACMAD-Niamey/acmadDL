@@ -23,8 +23,12 @@ def datasets(output):
         raise click.ClickException(
             f"rendering needs matplotlib (pip install 'acmadDL[demo]'): {e}")
     if output:
+        from pathlib import Path as _P
         show_datasets(save=output)
-        click.echo(f"wrote {output}")
+        sp = _P(output)
+        suffix = sp.suffix or ".png"
+        for page in ("observations", "forecasts"):
+            click.echo("wrote " + str(sp.with_name(sp.stem + "-" + page + suffix)))
     else:
         import matplotlib.pyplot as plt
         show_datasets()
