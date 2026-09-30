@@ -1301,6 +1301,12 @@ c3s/ecmwf-s2s:
   # if you have a single .cdsapirc that points at a different endpoint.
   cds_url: "https://ecds.ecmwf.int/api"
   cds_model: "ecmwf"               # threaded into request as `origin`
+  # Selects which members a retrieval returns. Pinned to the perturbed ensemble
+  # because that is what calibration wants, but note it EXCLUDES the control
+  # run: a mean over a default fetch averages 100 of the ensemble's 101 members.
+  # Pass fetch(..., forecast_type="control_forecast") to retrieve the control
+  # separately and concatenate on `member` (the control arrives as member 0 with
+  # no member dim, the perturbed as 1..100).
   forecast_type: "perturbed_forecast"
   level_type: "single_level"       # required by ECDS; without it MARS finds nothing
   variables:
@@ -1333,7 +1339,13 @@ c3s/ecmwf-s2s:
   grid:
     lat_res: 1.5
     lon_res: 1.5
-    forecast_members: 50   # S2S: 50 perturbed forecast (+control); reforecast ~11 — verify live
+    # Perturbed members only; the control run is additional and is NOT part of
+    # a default fetch (forecast_type below pins perturbed_forecast). Verified
+    # live 2026-09-30 for init 2023-09-25: 100 perturbed, numbered 1..100, plus
+    # one control, so the full ensemble is 101. ECMWF doubled the extended-range
+    # ensemble from 50 to 100 perturbed members at Cycle 48r1 (June 2023), so
+    # inits before then return 50 and will not match this count.
+    forecast_members: 100
     hindcast_members: 11
     hindcast_range: null   # on-the-fly reforecast keyed to each forecast's calendar week (see note below) — no fixed window
   # Hindcast availability depends on the issuance date — ECMWF S2S provides

@@ -51,8 +51,12 @@ def _fetch_raw_cached(product: str, variable: str, config: dict,
     select `target_lead_months`, and the CDS adapter requests only the season's
     leadtimes — so two different target seasons at the same init month would
     otherwise collide and the second would silently be served the first's
-    lead-averaged data. reject_degenerate is NOT a cache arg — it only governs
-    whether a fresh (cache-miss) response is validated before being memoized,
+    lead-averaged data. A non-default forecast_type is folded into init_date
+    by the caller rather than declared as its own cache arg — nuthatch resolves
+    every declared arg to its default when unpassed, so a new one would appear
+    in EVERY key (as `forecast_type_None`) and orphan every entry already
+    cached for every product. reject_degenerate is NOT a cache arg — it only
+    governs whether a fresh (cache-miss) response is validated before memoizing,
     so it must not fork the key.
     """
     return _fetch_raw(product, variable, config, date_range, region,
@@ -200,7 +204,7 @@ def fetch(product, variable, init=None, target=None, region=None,
           max_retries=3, retry_backoff=1.0, request_interval=0.0,
           reforecast=False, boundary="center", region_buffer=1.5,
           year_index=False, seasonal=None, grid_res=None, regrid_to=None,
-          months=None, degenerate_attempts=1):
+          months=None, degenerate_attempts=1, forecast_type=None):
     """Fetch, normalize, and optionally save climate data.
 
     init names the forecast issuance. Seasonal products take a month
@@ -266,6 +270,23 @@ def fetch(product, variable, init=None, target=None, region=None,
     with the given issuance instead of the forecast itself. Currently
     honoured by the CDS adapter's s2s-forecasts branch.
 
+    forecast_type=None (default): use the product's catalog value. For
+    c3s/ecmwf-s2s that is "perturbed_forecast", which returns ONLY the
+    perturbed members and excludes the control run — so an ensemble mean over
+    a default fetch averages 100 of the ensemble's 101 members. Pass
+    "control_forecast" to retrieve the control on its own and concatenate:
+
+        pf = acmaddl.fetch("c3s/ecmwf-s2s", "sst", init=init, region=box)
+        cf = acmaddl.fetch("c3s/ecmwf-s2s", "sst", init=init, region=box,
+                           forecast_type="control_forecast")
+        full = xr.concat([cf.sst.expand_dims("member"), pf.sst], dim="member")
+
+    The control is member 0 and arrives as a scalar `member` coordinate rather
+    than a dimension (it is one run), hence the expand_dims; the perturbed
+    members are 1..100. A non-default value forks the cache key, so the two
+    fetches do not overwrite one another. Honoured by the CDS adapter's
+    s2s-forecasts branch.
+
     seasonal=None (default): no seasonal aggregation. seasonal="mean" subsets
     the `target` season's months on the `time` dim and averages them to one
     value per year (dim `time` -> `year`). No-op for data vars that have no
@@ -308,6 +329,15 @@ def fetch(product, variable, init=None, target=None, region=None,
     # the flag is set regardless of whether `init` was supplied — guarding
     # against a silent fall-through to forecast mode in mis-calls.
     config["_reforecast"] = bool(reforecast)
+
+    # forecast_type selects which members an S2S retrieval returns. The catalog
+    # pins "perturbed_forecast", which silently omits the control run, so an
+    # ensemble mean taken over a default fetch is a mean of 100 of the
+    # ensemble's 101 members. Overriding to "control_forecast" fetches the
+    # control on its own; the two results are concatenated by the caller. Set
+    # only when given, so the catalog's pin stays the default.
+    if forecast_type is not None:
+        config["forecast_type"] = forecast_type
 
     # Reforecast dispatch: the CDS adapter switches its collection name to
     # `s2s-reforecasts` based on `_reforecast` (set above). The legacy MARS
@@ -437,6 +467,23 @@ def fetch(product, variable, init=None, target=None, region=None,
             config["target_lead_months"] = lead_months
             config["target_range"] = target_range
             cache_target_months = tuple(target_months)
+
+    # A non-default forecast_type selects a different set of members from the
+    # same product/variable/init/region, so it must fork the cache key or the
+    # control run and the perturbed ensemble would be served each other's data.
+    # It is folded into the init_date key component rather than declared as its
+    # own cache arg because nuthatch resolves every declared cache arg to its
+    # default when unpassed: a new arg would land in every key for every
+    # product as `forecast_type_None` and orphan the entire existing cache.
+    # Folding leaves a default fetch's key byte-identical to before.
+    if forecast_type is not None:
+        tag = str(forecast_type)
+        if isinstance(cache_init_date, tuple):
+            cache_init_date = cache_init_date + (tag,)
+        elif cache_init_date is None:
+            cache_init_date = tag
+        else:
+            cache_init_date = f"{cache_init_date}|{tag}"
 
     # Resolve the region once: adapters and the cache key see only the bbox
     # (stable, hashable); the optional polygon geometry is applied as the final
