@@ -406,3 +406,66 @@ def test_s2s_realtime_does_not_send_hyear(monkeypatch):
     adapter.fetch_data(config, "precip", date_range=(2026, 2026), region=[-2, 2, 36, 40])
     _, request, _ = fake.calls[0]
     assert "hyear" not in request
+
+
+def _capture_s2s_fetch(monkeypatch, **fetch_kwargs):
+    """Call acmaddl.fetch for the S2S product with the network and cache stubbed
+    out, returning the adapter config and the cache-key arguments it was given."""
+    import numpy as np
+    from importlib import import_module
+    import acmaddl
+    # acmaddl.fetch is the function, not the module — the attribute shadows it.
+    fetch_mod = import_module("acmaddl.fetch")
+
+    seen = {}
+
+    def fake_cached(product, variable, config, date_range, region, **kwargs):
+        seen["config"] = dict(config)
+        seen["cache_kwargs"] = dict(kwargs)
+        return xr.Dataset(
+            {"sst": (("number", "step", "latitude", "longitude"),
+                     np.full((2, 2, 2, 2), 300.0))},
+            coords={"number": [1, 2], "step": [24, 48],
+                    "latitude": [1.5, 0.0], "longitude": [45.0, 46.5]},
+        )
+
+    monkeypatch.setattr(fetch_mod, "_fetch_raw_cached", fake_cached)
+    monkeypatch.setattr(fetch_mod, "_fetch_raw", fake_cached)
+    acmaddl.fetch("c3s/ecmwf-s2s", "sst", init="2023-09-25",
+                  region=(-1.5, 1.5, 45.0, 46.5), verbose=False, **fetch_kwargs)
+    return seen
+
+
+def test_s2s_fetch_defaults_to_the_catalog_forecast_type(monkeypatch):
+    """Without the kwarg the catalog's pin stands and the cache key is untouched.
+
+    The key assertion is the absence of a forecast_type marker from init_date:
+    a default fetch must hash exactly as it did before the override existed, or
+    every S2S entry already in the cache is orphaned.
+    """
+    seen = _capture_s2s_fetch(monkeypatch)
+    assert seen["config"]["forecast_type"] == "perturbed_forecast"
+    assert seen["cache_kwargs"]["init_date"] == "2023-09-25"
+
+
+def test_s2s_fetch_forecast_type_reaches_the_adapter_and_forks_the_cache_key(monkeypatch):
+    """control_forecast overrides the pin and keys separately from the default.
+
+    The control run and the perturbed ensemble are different members of the same
+    product, variable, init and region, so sharing a key would serve one the
+    other's data.
+    """
+    seen = _capture_s2s_fetch(monkeypatch, forecast_type="control_forecast")
+    assert seen["config"]["forecast_type"] == "control_forecast"
+    assert seen["cache_kwargs"]["init_date"] == "2023-09-25|control_forecast"
+
+
+def test_s2s_catalog_member_count_excludes_the_control(monkeypatch):
+    """forecast_members counts perturbed members only.
+
+    Verified live for init 2023-09-25: 100 perturbed plus one control. A stale
+    50 here made validate() reject a correct fetch as the wrong member count.
+    """
+    from acmaddl import catalog
+    grid = catalog.get("c3s/ecmwf-s2s")["grid"]
+    assert grid["forecast_members"] == 100
