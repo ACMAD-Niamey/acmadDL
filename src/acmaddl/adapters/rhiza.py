@@ -21,8 +21,10 @@ import io
 import json
 import os
 import warnings
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import xarray as xr
 
 from .base import AdapterBase
@@ -182,6 +184,29 @@ def stamp(ds, *, skill, version, provider):
     ds.attrs["rhiza_skill"] = skill
     ds.attrs["rhiza_skill_version"] = version
     ds.attrs["rhiza_pin"] = provider_pin(provider)
+    return ds
+
+
+def reshape_forecast(ds, init):
+    """Their forecast Zarr -> acmadDL's raw forecast shape, before ``normalize()``.
+
+    * Drop any scalar ``time``/``valid_time``: for ecmwf-fetch and
+      dynamical-fetch it is the init (which we know), for SubC it is the
+      outlook's valid date (which must not be mistaken for the init).
+    * Add ``init_time`` (length 1) from the requested issuance.
+    * Derive ``valid_time = init_time + step`` as adapters/http.py does for
+      CHIRPS-GEFS; ``normalize()`` maps it onto the canonical ``time`` name.
+    * Drop ``step_bounds`` (cell-geometry helper; its ``nv`` dim goes with it).
+    """
+    for name in ("time", "valid_time"):
+        if name in ds.coords and name not in ds.dims:
+            ds = ds.drop_vars(name)
+    if "step_bounds" in ds.variables:
+        ds = ds.drop_vars("step_bounds")
+    init_ns = np.datetime64(datetime(init.year, init.month, init.day), "ns")
+    ds = ds.expand_dims(init_time=[init_ns])
+    if "step" in ds.dims:
+        ds = ds.assign_coords(valid_time=ds["init_time"] + ds["step"])
     return ds
 
 

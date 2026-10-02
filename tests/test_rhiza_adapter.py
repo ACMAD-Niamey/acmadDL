@@ -196,3 +196,51 @@ def test_stamp_adds_ours_and_keeps_theirs():
     assert ds.attrs["rhiza_skill_version"] == "0.0.2"
     assert len(ds.attrs["rhiza_pin"]) >= 7
     assert "weather_skills_history" in ds.attrs and "weather_skills_source" in ds.attrs
+
+
+# ── forecast reshape + normalize round trip ─────────────────────────────────
+
+from datetime import date
+from acmaddl.normalize import normalize
+
+FC_CONFIG = {
+    "adapter": "rhiza",
+    "variables": {"precip": {"native_name": "precipitation_surface", "units": "mm/day", "target_units": "mm/day"}},
+    "grid": {"lat_res": 0.25, "lon_res": 0.25},
+}
+
+
+def test_reshape_forecast_builds_init_and_valid_time():
+    ds = rhiza.reshape_forecast(fixture("ensemble_forecast"), date(2026, 9, 28))
+    assert ds.sizes["init_time"] == 1
+    assert "time" not in ds.coords and "step_bounds" not in ds.coords and "nv" not in ds.dims
+    assert set(ds["valid_time"].dims) == {"init_time", "step"}
+    assert ds["valid_time"].values[0, 0] == np.datetime64("2026-09-28T00:00:00", "ns")
+    assert ds["valid_time"].values[0, 1] == np.datetime64("2026-09-28", "ns") + ds["step"].values[1]
+
+
+def test_reshape_forecast_subc_valid_date_is_not_the_init():
+    raw = fixture("subc_envelope")                 # scalar time = valid date, not init
+    ds = rhiza.reshape_forecast(raw, date(2026, 9, 21))
+    assert ds["init_time"].values[0] == np.datetime64("2026-09-21", "ns")
+    assert ds["valid_time"].values[0, 0] == np.datetime64("2026-09-21", "ns") + ds["step"].values[0]
+
+
+@pytest.mark.parametrize("name,var", [("ensemble_forecast", "precipitation_surface"), ("s2s_forecast", "tp")])
+def test_forecast_round_trip_through_normalize(name, var):
+    cfg = {**FC_CONFIG, "variables": {"precip": {"native_name": var, "units": "mm/day", "target_units": "mm/day"}}}
+    raw = rhiza.reshape_forecast(fixture(name), date(2026, 9, 28))
+    out = normalize(raw, cfg, "precip", region=[-1.0, 1.0, 36.0, 38.0])
+    assert set(out["precip"].dims) == {"init_time", "lead_time", "member", "lat", "lon"}
+    assert np.issubdtype(out["lead_time"].dtype, np.timedelta64)
+    assert 0 in out["member"].values                        # control kept
+    assert np.all(np.diff(out["lat"].values) > 0)           # ascending
+    assert out["precip"].attrs["units"] == "mm/day"
+    assert set(out["time"].dims) == {"init_time", "lead_time"}   # valid_time -> time
+    assert out["time"].values[0, 0] == out["init_time"].values[0]
+
+
+def test_single_forecast_has_no_member_dim():
+    cfg = {**FC_CONFIG, "variables": {"temp": {"native_name": "temperature_2m", "units": "C", "target_units": "C"}}}
+    out = normalize(rhiza.reshape_forecast(fixture("single_forecast"), date(2026, 9, 28)), cfg, "temp")
+    assert "member" not in out.dims and {"init_time", "lead_time", "lat", "lon"} <= set(out["temp"].dims)
