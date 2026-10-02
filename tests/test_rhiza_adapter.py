@@ -92,3 +92,40 @@ def test_render_argv_requires_region_when_declared():
 def test_render_argv_missing_field_is_a_clear_error():
     with pytest.raises(ValueError, match="start"):
         rhiza.render_argv(["--start-time", "{start}"], {"init": "2026-09-28"}, skill="chirps-fetch")
+
+
+# ── fixtures: raw skill outputs, one per output shape ───────────────────────
+
+import json
+import numpy as np
+import xarray as xr
+
+FIXTURES = Path(__file__).parent / "fixtures" / "rhiza"
+FORECAST_FIXTURES = ["ensemble_forecast", "single_forecast", "s2s_forecast", "subc_envelope"]
+OBS_FIXTURES = ["analysis", "daily_obs", "imerg_daily", "smap_daily"]
+
+
+def fixture(name: str) -> xr.Dataset:
+    ds = xr.open_dataset(FIXTURES / f"{name}.nc").load()
+    ds.encoding = {}
+    for v in ds.variables:
+        ds[v].encoding = {}
+    return ds
+
+
+@pytest.mark.parametrize("name", FORECAST_FIXTURES)
+def test_forecast_fixtures_have_their_raw_schema(name):
+    ds = fixture(name)
+    assert {"step", "latitude", "longitude"} <= set(ds.dims)
+    assert np.issubdtype(ds["step"].dtype, np.timedelta64)
+    assert "time" in ds.coords and "time" not in ds.dims       # scalar init (or SubC valid date)
+    json.loads(ds.attrs["weather_skills_history"])
+    assert ds.sizes["latitude"] <= 3 and ds.sizes["longitude"] <= 3
+
+
+@pytest.mark.parametrize("name", OBS_FIXTURES)
+def test_obs_fixtures_have_their_raw_schema(name):
+    ds = fixture(name)
+    assert {"time", "latitude", "longitude"} <= set(ds.dims)
+    assert ds.sizes["time"] <= 4
+    json.loads(ds.attrs["weather_skills_history"])
