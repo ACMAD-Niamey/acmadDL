@@ -51,6 +51,11 @@ def test_products_have_required_fields_for_their_adapter():
             bad.append((k, "cds entry missing 'cds_dataset'"))
         elif ad == "iridl" and not v.get("iridl_path"):
             bad.append((k, "iridl entry missing 'iridl_path'"))
+        elif ad == "rhiza":
+            # Data comes from a Rhiza weather-skills script, named by skill (+ provider).
+            for field in ("skill", "argv"):
+                if not v.get(field):
+                    bad.append((k, f"rhiza entry missing {field!r}"))
         elif ad not in ("sheerwater", "cds", "iridl") and not v.get("source_url"):
             bad.append((k, f"{ad} entry missing 'source_url'"))
         # variables with native names
@@ -87,7 +92,9 @@ def test_legacy_members_field_is_gone():
 
 def test_ensemble_member_fields_are_paired_and_valid():
     """An ensemble product declares BOTH forecast_members and hindcast_members as
-    positive ints (observations/reanalysis declare neither)."""
+    positive ints (observations/reanalysis declare neither). A real-time-only
+    product with no reforecast stream (``hindcast_range: null``, e.g. the
+    rhiza/* forecasts) declares forecast_members alone."""
     bad = []
     for k, v in REAL.items():
         grid = v.get("grid") or {}
@@ -95,6 +102,11 @@ def test_ensemble_member_fields_are_paired_and_valid():
         present = [x for x in (f, h) if x is not None]
         if not present:
             continue  # non-ensemble product (obs/reanalysis)
+        realtime_only = "hindcast_range" in grid and grid["hindcast_range"] is None
+        if h is None and f is not None and realtime_only:
+            if not isinstance(f, int) or f <= 0:
+                bad.append((k, f"forecast_members not a positive int: {f!r}"))
+            continue
         if f is None or h is None:
             bad.append((k, f"only one of forecast_members/hindcast_members set (f={f}, h={h})")); continue
         for name, val in (("forecast_members", f), ("hindcast_members", h)):
@@ -117,7 +129,8 @@ def test_hindcast_ranges_are_well_formed():
         if lo < 1940:
             # 1940 = start of the ERA5 reanalysis record; anything earlier is a typo.
             bad.append((k, f"hindcast_range starts before 1940: {hr}"))
-        if hi > CUR_YEAR + 1:
+        if hi > CUR_YEAR + 1 and not v.get("allow_future"):
+            # allow_future marks a projection (rhiza/cmip6): coverage to 2100 is the point.
             bad.append((k, f"hindcast_range ends in the future: {hr} (now {CUR_YEAR})"))
     assert not bad, "Malformed hindcast ranges:\n" + _fmt(bad)
 

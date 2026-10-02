@@ -2,8 +2,6 @@
 
 Requires the rhiza dependency group (`uv sync --group rhiza`) and network access.
 """
-from datetime import date
-
 import acmaddl
 
 KENYA = [-5, 5.5, 33.5, 42]   # [lat_south, lat_north, lon_west, lon_east]
@@ -22,10 +20,11 @@ daily = (fc["precip"].mean("member").squeeze("init_time")
          .groupby(fc["lead_time"].dt.days).mean())
 print(daily.isel(days=slice(0, 10)).mean(("lat", "lon")).values)
 
-# CHIRPS daily for the current month to date: fetched in 10-day chunks upstream
-# (their skill has no --bbox), cropped to Kenya as each chunk loads, clipped to
-# the day CHIRPS has actually published.
-today = date.today()
-obs = acmaddl.fetch("rhiza/chirps-daily", "precip", hindcast=(today.year, today.year),
-                    months=[today.month], region=KENYA)
+# CHIRPS daily, the last 10 published days: no hindcast= means the trailing
+# window ending on the day CHIRPS has actually published (it lags about a
+# week). Their skill has no --bbox, so acmaddl fetches in 10-day chunks and
+# crops each chunk to Kenya as it loads. For a specific month use
+# hindcast=(year, year), months=[m]; a month with nothing published yet is
+# refused with "not published yet".
+obs = acmaddl.fetch("rhiza/chirps-daily", "precip", region=KENYA)
 print(obs)
