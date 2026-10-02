@@ -31,3 +31,28 @@ class VariableNotSupported(ValueError):
             f"{product} does not provide {variable!r}; it serves "
             f"{', '.join(self.available) or 'no variables'}"
         )
+
+
+class RhizaNotInstalled(ImportError):
+    """The Rhiza weather-skills provider packages are not in this environment.
+
+    They live in the uv dependency group ``rhiza`` (git-pinned, so they cannot
+    be a PyPI extra). Raised before any network I/O.
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        super().__init__(
+            f"Rhiza weather-skills package {provider!r} is not installed. "
+            f"Install the group: uv sync --group rhiza"
+        )
+
+
+class RhizaSkillError(RuntimeError):
+    """A Rhiza skill script refused the request or failed while running.
+
+    Their ``@weather_skill`` decorator prints the reason to stderr and exits
+    non-zero; the adapter captures that text and surfaces it here verbatim, so
+    an embargoed ECMWF init or a missing credential reads the same whether the
+    skill ran from a shell or from acmaddl.
+    """
