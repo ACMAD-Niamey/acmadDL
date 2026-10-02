@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import tempfile
 import warnings
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -180,9 +181,25 @@ def open_output(path):
             return ds.load()
 
 
+_NETCDF_ATTR_TYPES = (str, bytes, int, float, list, tuple, np.ndarray, np.generic)
+
+
+def _netcdf_safe_attrs(ds):
+    """JSON-encode attrs NetCDF cannot store (dynamical.org stamps dict-valued
+    ``statistics_approximate`` on coords). ``sanitize_for_netcdf`` rebuilds the
+    dataset but keeps attrs as they are, so this has to happen here."""
+    def fix(attrs):
+        return {k: (v if isinstance(v, _NETCDF_ATTR_TYPES) else json.dumps(v, default=str))
+                for k, v in attrs.items()}
+    ds.attrs = fix(ds.attrs)
+    for name in list(ds.variables):
+        ds[name].attrs = fix(ds[name].attrs)
+    return ds
+
+
 def stamp(ds, *, skill, version, provider):
     """Record which skill produced this dataset next to their own provenance."""
-    ds = ds.copy()
+    ds = _netcdf_safe_attrs(ds.copy())
     ds.attrs["rhiza_skill"] = skill
     ds.attrs["rhiza_skill_version"] = version
     ds.attrs["rhiza_pin"] = provider_pin(provider)
@@ -311,8 +328,61 @@ def ecds_environment(home=None):
     )
 
 
+def _today():
+    """Patch point for tests."""
+    return date.today()
+
+
 class RhizaAdapter(AdapterBase):
     """Catalog entries: ``adapter: rhiza``; see module docstring and catalog.yaml header."""
 
     def fetch_data(self, product_config, variable, date_range=None, region=None):
-        raise NotImplementedError  # Task 9
+        cfg = product_config
+        provider = cfg.get("provider", "weather-skills")
+        skill = cfg["skill"]
+        entrypoint = cfg.get("entrypoint", "fetch")
+        template = [str(t) for t in cfg["argv"]]
+        verbose = bool(cfg.get("_verbose"))
+        native = cfg["variables"][variable]["native_name"]
+        requires_region = bool(cfg.get("requires_region"))
+        fn, version = load_entrypoint(provider, skill, entrypoint)
+        env = ecds_environment() if cfg.get("credentials") == "ecds" else {}
+        fields = {"variable": native, "bbox": bbox_nwse(region) if region else None}
+
+        is_forecast = any("{init}" in t for t in template)
+        is_obs = any("{start}" in t or "{end}" in t for t in template)
+        if not (is_forecast or is_obs):
+            raise ValueError(
+                f"{skill}: argv template has neither {{init}} nor {{start}}/{{end}}; "
+                "a rhiza/* entry must be a forecast (init-keyed) or an observation (date-window) product"
+            )
+
+        with tempfile.TemporaryDirectory(prefix="acmaddl-rhiza-") as tmp:
+            tmp = Path(tmp)
+            if is_forecast:
+                init = cfg.get("_init_date")
+                if not init:
+                    raise ValueError(
+                        f"{skill} is issuance-keyed: pass init='YYYY-MM-DD' (a full date; a month "
+                        "alone selects nothing). Reforecasts are not available through rhiza/* products."
+                    )
+                argv = render_argv(template, {**fields, "init": init}, requires_region=requires_region, skill=skill)
+                if verbose:
+                    print(f"[acmaddl:rhiza] {skill} {' '.join(argv)}")
+                out = run_skill(fn, argv, tmp / "out.zarr", env=env, verbose=verbose, skill=skill)
+                ds = reshape_forecast(open_output(out), date.fromisoformat(init))
+            else:
+                windows = observation_windows(date_range, cfg.get("init_months"), cfg.get("window_days"), _today())
+                parts = []
+                for k, (start, end) in enumerate(windows):
+                    argv = render_argv(template, {**fields, "start": start.isoformat(), "end": end.isoformat()},
+                                       requires_region=requires_region, skill=skill)
+                    if verbose:
+                        print(f"[acmaddl:rhiza] {skill} {' '.join(argv)} ({k + 1}/{len(windows)})")
+                    out = run_skill(fn, argv, tmp / f"out{k}.zarr", env=env, verbose=verbose, skill=skill)
+                    part = open_output(out)
+                    if region is not None:
+                        part = crop_region(part, region)
+                    parts.append(part)
+                ds = parts[0] if len(parts) == 1 else xr.concat(parts, dim="time", combine_attrs="override")
+        return stamp(ds, skill=skill, version=version, provider=provider)

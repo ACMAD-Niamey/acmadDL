@@ -324,3 +324,90 @@ def test_ecds_env_prefers_cdsapi_env_vars(monkeypatch, tmp_path):
     monkeypatch.setenv("CDSAPI_URL", "https://ecds.ecmwf.int/api")
     monkeypatch.setenv("CDSAPI_KEY", "zzz")
     assert rhiza.ecds_environment(home=tmp_path)["ECMWF_DATASTORES_KEY"] == "zzz"
+
+
+# ── fetch_data end to end through acmaddl.fetch ─────────────────────────────
+
+import acmaddl
+
+RHIZA_FC = {
+    "adapter": "rhiza", "provider": "weather-skills", "skill": "dynamical-fetch",
+    "argv": ["--dataset", "ecmwf-ifs-ens-forecast-15-day-0-25-degree", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"],
+    "variables": {"precip": {"native_name": "precipitation_surface", "units": "mm/day", "target_units": "mm/day"}},
+    "grid": {"lat_res": 0.25, "lon_res": 0.25, "forecast_members": 51},
+}
+RHIZA_OBS = {
+    "adapter": "rhiza", "provider": "weather-skills", "skill": "chirps-fetch",
+    "argv": ["--start-time", "{start}", "--end-time", "{end}"], "window_days": 2,
+    "variables": {"precip": {"native_name": "precip", "units": "mm/day", "target_units": "mm/day"}},
+    "grid": {"lat_res": 0.05, "lon_res": 0.05, "temporal": "daily"},
+}
+
+
+@pytest.fixture
+def fake_catalog(monkeypatch):
+    """Register two throwaway rhiza/* products and route skill loading to fakes."""
+    from acmaddl import catalog
+    entries = {"rhiza/_test-fc": RHIZA_FC, "rhiza/_test-obs": RHIZA_OBS}
+    real_info = catalog.info
+    monkeypatch.setattr(catalog, "info", lambda p: dict(entries[p]) | {"deprecated": False} if p in entries else real_info(p))
+    monkeypatch.setattr(catalog, "get", catalog.info)
+    wrappers = {"dynamical-fetch": fake_wrapper("ensemble_forecast"), "chirps-fetch": fake_wrapper("daily_obs")}
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda provider, skill, entrypoint="fetch": (wrappers[skill], "9.9.9"))
+    return wrappers
+
+
+def test_fetch_forecast_end_to_end(fake_catalog):
+    ds = acmaddl.fetch("rhiza/_test-fc", "precip", init="2026-09-28", region=[-1, 1, 36, 38], cache=False)
+    argv = fake_catalog["dynamical-fetch"].calls[0]
+    assert argv[:8] == ["--dataset", "ecmwf-ifs-ens-forecast-15-day-0-25-degree", "--date", "2026-09-28",
+                        "--bbox", "1/36/-1/38", "-v", "precipitation_surface"]
+    assert set(ds["precip"].dims) == {"init_time", "lead_time", "member", "lat", "lon"}
+    assert ds["init_time"].values[0] == np.datetime64("2026-09-28", "ns")
+    assert ds.attrs["rhiza_skill"] == "dynamical-fetch" and ds.attrs["rhiza_skill_version"] == "9.9.9"
+    assert "weather_skills_history" in ds.attrs
+
+
+def test_fetch_forecast_month_only_init_is_rejected(fake_catalog):
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        acmaddl.fetch("rhiza/_test-fc", "precip", init="2026-09", region=[-1, 1, 36, 38], cache=False)
+
+
+def test_fetch_forecast_without_init_is_rejected(fake_catalog):
+    with pytest.raises(ValueError, match="init="):
+        acmaddl.fetch("rhiza/_test-fc", "precip", region=[-1, 1, 36, 38], cache=False)
+
+
+def test_fetch_obs_chunks_and_concatenates(fake_catalog, monkeypatch):
+    monkeypatch.setattr(rhiza, "_today", lambda: date(2026, 10, 1))
+    ds = acmaddl.fetch("rhiza/_test-obs", "precip", hindcast=(2026, 2026), months=[9], region=[-1, 1, 36, 38], cache=False)
+    calls = fake_catalog["chirps-fetch"].calls
+    assert calls[0][:4] == ["--start-time", "2026-09-01", "--end-time", "2026-09-02"]
+    assert calls[-1][:4] == ["--start-time", "2026-09-29", "--end-time", "2026-09-30"]
+    assert len(calls) == 15
+    assert set(ds["precip"].dims) == {"time", "lat", "lon"}
+    assert ds.sizes["time"] == 15 * fixture("daily_obs").sizes["time"]   # each chunk contributes the fixture's days
+
+
+def test_fetch_data_template_without_dates_is_rejected():
+    cfg = {**RHIZA_OBS, "argv": ["--bbox", "{bbox}"]}
+    with pytest.raises(ValueError, match="neither"):
+        rhiza.RhizaAdapter().fetch_data(cfg, "precip", date_range=(2026, 2026), region=[-1, 1, 36, 38])
+
+
+def test_fetch_output_round_trips_to_netcdf(fake_catalog, tmp_path):
+    """dynamical.org stamps dict-valued coord attrs; the adapter must leave the
+    result writable (sanitize_for_netcdf does not JSON-encode attrs)."""
+    wrapper = fake_catalog["dynamical-fetch"]
+    def fn(argv):
+        wrapper.calls.append(list(argv))
+        ds = fixture("ensemble_forecast")
+        ds["latitude"].attrs["statistics_approximate"] = {"min": -90.0, "max": 90.0}
+        ds.attrs["nested"] = {"a": [1, 2]}
+        ds.to_zarr(Path(argv[argv.index("-o") + 1]), mode="w", consolidated=True)
+    fn.parser = object()
+    fake_catalog["dynamical-fetch"] = fn
+    out = acmaddl.fetch("rhiza/_test-fc", "precip", init="2026-09-28", region=[-1, 1, 36, 38], cache=False,
+                        destination=str(tmp_path / "fc.nc"), format="netcdf")
+    assert (tmp_path / "fc.nc").exists()
+    assert isinstance(out["lat"].attrs["statistics_approximate"], str)
