@@ -21,7 +21,8 @@ import io
 import json
 import os
 import warnings
-from datetime import datetime
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,7 @@ import xarray as xr
 
 from .base import AdapterBase
 from ..errors import RhizaNotInstalled, RhizaSkillError
+from ..normalize import select_lon
 
 INSTALL_HINT = "uv sync --group rhiza"
 
@@ -208,6 +210,65 @@ def reshape_forecast(ds, init):
     if "step" in ds.dims:
         ds = ds.assign_coords(valid_time=ds["init_time"] + ds["step"])
     return ds
+
+
+def observation_windows(date_range, init_months, window_days, today):
+    """[start, end] date windows for an observation request.
+
+    acmadDL's observation API is year-based (``hindcast=(y0, y1)``) with an
+    optional ``months=`` filter (``init_months``). Each year's selected months
+    collapse into contiguous runs, clipped to yesterday, then split into
+    chunks of at most ``window_days`` days. No ``hindcast`` at all means the
+    trailing ``window_days`` (default 10) days ending yesterday.
+    """
+    yesterday = today - timedelta(days=1)
+    if date_range is None:
+        n = int(window_days or 10)
+        spans = [(yesterday - timedelta(days=n - 1), yesterday)]
+    else:
+        y0, y1 = int(date_range[0]), int(date_range[1])
+        months = sorted({int(m) for m in init_months}) if init_months else list(range(1, 13))
+        spans = []
+        for year in range(y0, y1 + 1):
+            run = []
+            for m in months + [None]:
+                if m is None or (run and m != run[-1] + 1):
+                    spans.append((date(year, run[0], 1), date(year, run[-1], monthrange(year, run[-1])[1])))
+                    run = []
+                if m is not None:
+                    run.append(m)
+        spans = [(s, min(e, yesterday)) for s, e in spans if s <= yesterday]
+        if not spans:
+            raise ValueError(
+                f"observation window {date_range} / months={init_months} lies entirely in the future "
+                f"(today is {today.isoformat()})"
+            )
+    if not window_days:
+        return spans
+    out = []
+    for s, e in spans:
+        cur = s
+        while cur <= e:
+            nxt = min(cur + timedelta(days=int(window_days) - 1), e)
+            out.append((cur, nxt))
+            cur = nxt + timedelta(days=1)
+    return out
+
+
+def crop_region(ds, region):
+    """Crop a raw skill output to acmadDL's bbox before it is concatenated.
+
+    Used for the global observation fetchers (no ``--bbox`` flag) so each
+    chunk shrinks as soon as it loads. Latitude may be descending; longitude
+    may be 0-360 — ``select_lon`` handles the convention and the seam.
+    """
+    lat_s, lat_n, lon_w, lon_e = (float(v) for v in region)
+    lat_name = "lat" if "lat" in ds.dims else "latitude"
+    lon_name = "lon" if "lon" in ds.dims else "longitude"
+    lat_vals = ds[lat_name].values
+    lat_slice = slice(lat_n, lat_s) if len(lat_vals) > 1 and lat_vals[0] > lat_vals[-1] else slice(lat_s, lat_n)
+    ds = ds.sel({lat_name: lat_slice})
+    return select_lon(ds, lon_w, lon_e, lon_name=lon_name)
 
 
 class RhizaAdapter(AdapterBase):

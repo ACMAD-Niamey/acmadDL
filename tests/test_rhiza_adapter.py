@@ -244,3 +244,42 @@ def test_single_forecast_has_no_member_dim():
     cfg = {**FC_CONFIG, "variables": {"temp": {"native_name": "temperature_2m", "units": "C", "target_units": "C"}}}
     out = normalize(rhiza.reshape_forecast(fixture("single_forecast"), date(2026, 9, 28)), cfg, "temp")
     assert "member" not in out.dims and {"init_time", "lead_time", "lat", "lon"} <= set(out["temp"].dims)
+
+
+# ── observation windows + pre-concat crop ───────────────────────────────────
+
+def test_windows_default_is_trailing_days_ending_yesterday():
+    today = date(2026, 10, 1)
+    assert rhiza.observation_windows(None, None, 10, today) == [(date(2026, 9, 21), date(2026, 9, 30))]
+    assert rhiza.observation_windows(None, None, None, today) == [(date(2026, 9, 21), date(2026, 9, 30))]
+
+
+def test_windows_year_and_months_become_contiguous_runs():
+    w = rhiza.observation_windows((2020, 2020), [3, 4, 5, 10], None, date(2026, 10, 1))
+    assert w == [(date(2020, 3, 1), date(2020, 5, 31)), (date(2020, 10, 1), date(2020, 10, 31))]
+
+
+def test_windows_are_chunked_and_clipped_to_yesterday():
+    w = rhiza.observation_windows((2026, 2026), [9], 10, date(2026, 9, 25))
+    assert w == [(date(2026, 9, 1), date(2026, 9, 10)), (date(2026, 9, 11), date(2026, 9, 20)),
+                 (date(2026, 9, 21), date(2026, 9, 24))]
+
+
+def test_windows_entirely_in_the_future_raise():
+    with pytest.raises(ValueError, match="future"):
+        rhiza.observation_windows((2031, 2031), None, 10, date(2026, 10, 1))
+
+
+def test_crop_region_handles_descending_latitude_and_native_names():
+    raw = fixture("daily_obs")                       # latitude descending, global CHIRPS names
+    out = rhiza.crop_region(raw, [-0.5, 0.5, 36.5, 37.5])
+    assert out.sizes["latitude"] >= 1 and out.sizes["longitude"] >= 1
+    assert float(out["latitude"].min()) >= -0.6 and float(out["latitude"].max()) <= 0.6
+
+
+def test_crop_region_seam_crossing_box_uses_select_lon():
+    lon = np.arange(0.0, 360.0, 60.0)               # 0..300, a 0-360 source
+    ds = xr.Dataset({"x": (("latitude", "longitude"), np.ones((2, 6)))},
+                    coords={"latitude": [1.0, 0.0], "longitude": lon})
+    out = rhiza.crop_region(ds, [0.0, 1.0, -70.0, 70.0])
+    assert sorted(out["longitude"].values.tolist()) == [0.0, 60.0, 300.0]
