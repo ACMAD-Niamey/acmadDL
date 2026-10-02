@@ -24,6 +24,7 @@ The skill is a snapshot of the source. Any change that alters observable behavio
 | Credentials/adapters (new source, auth flow, rate limits) | `skills/acmaddl/references/products.md` + `troubleshooting.md` |
 | MCP server (`src/acmaddl/mcp/server.py`: tools, resources, workdir/env vars, output naming) | `README.md` "MCP server" + `skills/acmaddl/SKILL.md` ("MCP server" note) + `tests/test_mcp_server.py` |
 | Public API changes above that the MCP server wraps (`fetch`/`zonal` params, catalog/health return shapes) | `src/acmaddl/mcp/server.py` tool signatures/docstrings, if the tool exposes the changed parameter |
+| Rhiza adapter (`adapters/rhiza.py`), `rhiza/*` catalog entries, provider pins in `pyproject.toml` | `skills/acmaddl/references/products.md` (rhiza section) + `data-conventions.md` (rhiza shape) + `troubleshooting.md` (group install, pin bump) + `README.md` "Rhiza weather-skills"; moving a pin also re-captures `tests/fixtures/rhiza` and bumps `fetch._CACHE_VERSION` |
 | Anything user-facing | `README.md` if it covers the topic |
 
 Also update `skills/acmaddl/examples/` if a change breaks or obsoletes an example. If you are unsure whether a change is documented, grep `skills/` and `README.md` for the function, product id, or parameter you touched — stale docs are treated as bugs.

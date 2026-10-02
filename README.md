@@ -14,6 +14,14 @@ The distribution is published as `acmadDL`; the import name is `acmaddl`. acmadD
 
 Most CDS-based products (`c3s/*`, `obs/era5`) need CDS or ECMWF Data Store credentials; see [CDS / ECDS setup](#cds--ecds-setup).
 
+The `rhiza/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetchers in-process. Their packages are git-pinned, so they live in a uv dependency group rather than an extra:
+
+```bash
+uv sync --group rhiza
+```
+
+This requires uv: the group needs acmadDL's `xarray>=2026.7` override of sheerwater's stale pin, which plain `pip` cannot apply. See [Rhiza weather-skills](#rhiza-weather-skills-rhiza).
+
 ## Core API
 
 ```python
@@ -187,6 +195,57 @@ empty trailing slots exposed by the upstream endpoint.
 | `c3s/ecmwf-s2s` | ECMWF S2S | ECMWF Data Store | `cds` | precip, sst | twice weekly | 50 / 11 | - | on-the-fly |
 
 `c3s/ecmwf-s2s` is date-keyed: call it with `init="YYYY-MM-DD"` (the issuance date). Its reforecasts are generated on the fly, so there is no fixed hindcast window. It uses the ECMWF Data Store (`ecds.ecmwf.int`), a separate service from the Copernicus CDS; see [ECMWF Data Store (ECDS) setup](#ecmwf-data-store-ecds-setup).
+
+### Rhiza weather-skills (`rhiza/*`)
+
+The `rhiza/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetcher scripts **unmodified, in-process**, and reshape only their output. Install the dependency group first (`uv sync --group rhiza`; see [Installation](#installation)). What they share:
+
+- **Forecasts are one issuance per fetch**: `init="YYYY-MM-DD"`. There is no reforecast stream, so they cannot feed `assemble()` hindcast tuples; for ECMWF S2S reforecasts keep using `c3s/ecmwf-s2s` with `reforecast=True`.
+- **Member 0 is the control run** and is kept; `forecast_members` counts it.
+- **`lead_time` is a `timedelta64` of native steps** (daily for ECMWF S2S, 3-6 hourly for IFS-ENS and GEFS, one step for a SubC outlook); `time` is the derived valid time. Aggregate downstream.
+- **Observation windows** come from `hindcast=(y, y)` plus `months=[...]`, clipped to the skill's own published latest day; without `hindcast` you get the trailing 10 days. `rhiza/chirps-daily` and `rhiza/imerg-daily*` load the full global grid per day upstream, so acmadDL fetches them in 10-day chunks and crops each chunk as it loads — keep those windows short.
+- **Provenance** travels with the data: their `weather_skills_history` and `weather_skills_source` attributes stay on the output (so their `provenance` skill reads our files), plus `rhiza_skill`, `rhiza_skill_version` and `rhiza_pin` (the provider commit).
+- `rhiza/ifs-ens-46d` is the same ECMWF extended-range ensemble as `rhiza/ecmwf-s2s`, served credential-free and without the 2-day embargo from the dynamical.org open catalog.
+- The ICON-EU, HRDPS, HRRR and MRMS entries are regional (Europe, Canada, CONUS); an African bounding box returns an empty selection. They are catalogued for completeness.
+
+**Forecasts**
+
+| Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
+|---|---|---|---|---|---|
+| `rhiza/ecmwf-s2s` | ecmwf-fetch | precip, temp, sst, d2m, mx2t6, mn2t6, u10, v10, msl, cape, tcw | daily | 101 | ECDS |
+| `rhiza/ifs-ens-15d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) | precip, temp | 3-6 hourly | 51 | none |
+| `rhiza/ifs-ens-46d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) | precip, temp | daily | 51 | none |
+| `rhiza/ifs-ens-46d-6h` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree`) | precip, temp | 6 hourly | 51 | none |
+| `rhiza/aifs-ens` | dynamical-fetch (`ecmwf-aifs-ens-forecast`) | precip, temp | 6 hourly | 51 | none |
+| `rhiza/aifs-single` | dynamical-fetch (`ecmwf-aifs-single-forecast`) | precip, temp | 6 hourly | - | none |
+| `rhiza/gefs-35d` | dynamical-fetch (`noaa-gefs-forecast-35-day`) | precip, temp | 3-6 hourly | 31 | none |
+| `rhiza/gfs` | dynamical-fetch (`noaa-gfs-forecast`) | precip, temp | 3 hourly | - | none |
+| `rhiza/icon-eu-5d` | dynamical-fetch (`dwd-icon-eu-forecast-5-day`) | precip, temp | hourly | - | none |
+| `rhiza/hrdps` | dynamical-fetch (`eccc-hrdps-forecast`) | precip, temp | hourly | - | none |
+| `rhiza/hrrr-48h` | dynamical-fetch (`noaa-hrrr-forecast-48-hour`) | precip, temp | hourly | - | none |
+| `rhiza/subc-mme-7d` | subc-mme-fetch (`7d`) | precip, temp, sst, tasmax, tasmin, tdps | 7-day outlook | - | none |
+| `rhiza/subc-mme-15d` | subc-mme-fetch (`15d`) | precip, temp, sst, tasmax, tasmin, tdps | 15-day outlook | - | none |
+| `rhiza/subc-mme-30d` | subc-mme-fetch (`30d`) | precip, temp, sst, tasmax, tasmin, tdps | 30-day outlook | - | none |
+
+**Observations and analyses**
+
+| Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
+|---|---|---|---|---|---|
+| `rhiza/gefs-analysis` | dynamical-fetch (`noaa-gefs-analysis`) | precip, temp | 3 hourly | - | none |
+| `rhiza/gfs-analysis` | dynamical-fetch (`noaa-gfs-analysis`) | precip, temp | hourly | - | none |
+| `rhiza/imerg-early-30min` | dynamical-fetch (`nasa-imerg-analysis-early`) | precip | half-hourly | - | none |
+| `rhiza/imerg-late-30min` | dynamical-fetch (`nasa-imerg-analysis-late`) | precip | half-hourly | - | none |
+| `rhiza/hrrr-analysis` | dynamical-fetch (`noaa-hrrr-analysis`) | precip, temp | hourly | - | none |
+| `rhiza/mrms-hourly` | dynamical-fetch (`noaa-mrms-conus-analysis-hourly`) | precip | hourly | - | none |
+| `rhiza/chirps-daily` | chirps-fetch | precip | daily | - | none |
+| `rhiza/imerg-daily` | imerg-fetch (`late`) | precip | daily | - | Earthdata |
+| `rhiza/imerg-daily-final` | imerg-fetch (`final`) | precip | daily | - | Earthdata |
+| `rhiza/era5` | arco-era5-fetch | precip, temp, sst | hourly | - | none |
+| `rhiza/oisst-daily` | oisst-fetch | sst | daily | - | none |
+| `rhiza/smap-daily` | smap-fetch | soil_moisture | daily | - | Earthdata |
+| `rhiza/cmip6` | cmip6-fetch (`ssp245`) | precip, temp | monthly | - | none |
+
+`rhiza/ecmwf-s2s` reads ECDS credentials from `ECMWF_DATASTORES_URL`/`ECMWF_DATASTORES_KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc` (a Copernicus CDS token is refused with instructions). IMERG daily and SMAP use NASA Earthdata (`EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD` or `.netrc`).
 
 ### Reanalysis
 

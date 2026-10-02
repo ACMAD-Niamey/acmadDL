@@ -46,6 +46,13 @@ The s3 adapter shells out to the **AWS CLI** (`aws s3 ls/cp`) — configure `aws
 | `DegenerateResponseError` | acmaddl's guard rejected a bitwise-constant / zero-filled (or, on the OPeNDAP obs path, all-NaN) response before it reached the cache. For OPeNDAP obs (`obs/ersst-v5`, `obs/cmap`) this is always on — commonly it means a truncated chunk, or (for the ocean-only `obs/ersst-v5`) a **land-only bbox** that is legitimately all-NaN (request an ocean-containing region). On the general path it only fires when you passed `degenerate_attempts>1`; acmaddl already retried with the cache bypassed, so a persistent error means the source itself is returning bad data. |
 | `AttributeError` on sheerwater's `chirps_raw_live` | Upstream sheerwater removed the near-real-time function; `obs/chirps-live-rhiza` fails until it is restored — for current-season CHIRPS use the native CHC products (subject to their rate limits) |
 | Full CrowdSec 403 on **every** CHC path including the site root | The IP ban is site-wide and time-limited (hours to days) — wait it out; don't retry, it can extend the ban |
+| `RhizaNotInstalled` | The `rhiza/*` products need the Rhiza provider packages: `uv sync --group rhiza` (uv only — see Install notes) |
+| `RhizaSkillError: ... embargo` / `no data for this init` | ecmwf-fetch refused the init: real-time ECMWF S2S is embargoed 2 days — pick an older `init`, or use the credential-free `rhiza/ifs-ens-46d` |
+| `RhizaSkillError: ... ECMWF Data Store credentials` | `rhiza/ecmwf-s2s` needs an ECDS token (`ECMWF_DATASTORES_URL`/`KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc`); a Copernicus CDS key is a different token |
+| `RhizaSkillError: ... need at least 2 points on 'time'` | Their analysis/monthly fetchers cannot stamp an interval from one time point — widen the window (two days, or two months for `rhiza/cmip6`) |
+| `ValueError: observation window ... not published yet` | The requested months lie past the skill's `--probe-latest` day — ask for an earlier month or drop `hindcast` for the trailing window |
+| `ValueError: ... pass init='YYYY-MM-DD'` on a `rhiza/*` forecast | These are issuance-keyed: a full date, one issuance per fetch; there is no reforecast stream |
+| `MemoryError` on `rhiza/chirps-daily` / `rhiza/imerg-daily*` | Their skill loads the full global grid per day; acmaddl chunks by `window_days` (10) and crops per chunk — pass `months=` or a one-year `hindcast`, never a decade |
 
 ## OPeNDAP silent truncation and the degenerate-response guard
 
@@ -91,6 +98,7 @@ The guard protects the *cache*; the complementary per-field check for a *workflo
 ## Install notes
 
 - `pip install acmadDL`; `import acmaddl`. Python ≥ 3.12.
-- Under **uv**, `[tool.uv] override-dependencies = ["zarr>=3.1.0"]` resolves the sheerwater (`zarr==2.18.3` pin) vs icechunk (`zarr>=3`) conflict. Under plain pip, the `icechunk` extra is opt-in for the same reason.
+- Under **uv**, `[tool.uv] override-dependencies = ["zarr>=3.1.0", "xarray>=2026.7"]` resolves sheerwater's stale `zarr==2.18.3` / `xarray==2025.1.0` pins against icechunk (`zarr>=3`) and the Rhiza weather-skills group (`xarray>=2026.7`). Under plain pip, the `icechunk` extra is opt-in and the `rhiza` group cannot be installed at all.
+- **Rhiza weather-skills** (`rhiza/*`): `uv sync --group rhiza`. A dependency *group*, not an extra, because the three provider packages are git-pinned and PyPI rejects git URLs in published metadata. Pins live in `[tool.uv.sources]`; **moving a pin** means re-capturing `tests/fixtures/rhiza` (`uv run python scripts/capture_rhiza_fixtures.py`, `--real` with ECDS/Earthdata credentials) and bumping `fetch._CACHE_VERSION`, because the raw-fetch cache key cannot see the pin. Their scripts declare Python `<3.13` for `uv run --script`; acmaddl imports them instead, so 3.12-3.14 all work.
 - Extras: `geo` (shapefile/geometry regions, geotiff band descriptions), `s3`, `icechunk`, `demo` (matplotlib, cartopy, rasterio), `dev` (pytest).
 - Tests: `pytest` runs unit tests; markers `integration`, `cds`, `network` gate live-network suites.
