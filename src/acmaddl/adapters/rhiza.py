@@ -85,6 +85,41 @@ def provider_pin(provider: str) -> str:
         return "unknown"
 
 
+def bbox_nwse(region) -> str:
+    """acmadDL ``[lat_s, lat_n, lon_w, lon_e]`` -> weather-skills ``N/W/S/E``."""
+    lat_s, lat_n, lon_w, lon_e = (float(v) for v in region)
+    return f"{lat_n:g}/{lon_w:g}/{lat_s:g}/{lon_e:g}"
+
+
+def render_argv(template, fields, *, requires_region=False, skill=""):
+    """Fill a catalog ``argv`` template.
+
+    ``{bbox}`` is special: when no region was requested the ``--bbox {bbox}``
+    pair is dropped (most skills make it optional), unless the entry says
+    ``requires_region: true``, in which case the caller must pass one.
+    """
+    if fields.get("bbox") is None and requires_region:
+        raise ValueError(
+            f"{skill or 'this skill'} needs a region: pass region=[lat_s, lat_n, lon_w, lon_e]"
+        )
+    out, i = [], 0
+    while i < len(template):
+        tok = str(template[i])
+        nxt = str(template[i + 1]) if i + 1 < len(template) else None
+        if nxt is not None and "{bbox}" in nxt and fields.get("bbox") is None:
+            i += 2
+            continue
+        try:
+            out.append(tok.format(**fields))
+        except KeyError as exc:
+            raise ValueError(
+                f"{skill or 'skill'} argv template needs {exc.args[0]!r}, "
+                f"which this request did not provide (fields: {sorted(fields)})"
+            ) from None
+        i += 1
+    return out
+
+
 class RhizaAdapter(AdapterBase):
     """Catalog entries: ``adapter: rhiza``; see module docstring and catalog.yaml header."""
 

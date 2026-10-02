@@ -61,3 +61,34 @@ def test_locate_and_load_real_entrypoint():
 def test_provider_pin_is_a_commit():
     pin = rhiza.provider_pin("weather-skills")
     assert len(pin) == 40 and all(c in "0123456789abcdef" for c in pin)
+
+
+# ── argv rendering ──────────────────────────────────────────────────────────
+
+def test_bbox_nwse_reorders_acmaddl_bbox():
+    # acmadDL: [lat_s, lat_n, lon_w, lon_e]; weather-skills: N/W/S/E
+    assert rhiza.bbox_nwse([-5.0, 5.5, 33.5, 42.0]) == "5.5/33.5/-5/42"
+
+
+def test_render_argv_fills_fields_in_order():
+    tpl = ["--dataset", "noaa-gefs-forecast-35-day", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
+    out = rhiza.render_argv(tpl, {"init": "2026-09-28", "bbox": "5/34/-5/42", "variable": "precipitation_surface"})
+    assert out == ["--dataset", "noaa-gefs-forecast-35-day", "--date", "2026-09-28",
+                   "--bbox", "5/34/-5/42", "-v", "precipitation_surface"]
+
+
+def test_render_argv_drops_bbox_pair_when_no_region():
+    tpl = ["--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
+    out = rhiza.render_argv(tpl, {"init": "2026-09-28", "bbox": None, "variable": "tp"})
+    assert out == ["--date", "2026-09-28", "-v", "tp"]
+
+
+def test_render_argv_requires_region_when_declared():
+    tpl = ["--date", "{init}", "--bbox", "{bbox}"]
+    with pytest.raises(ValueError, match="region"):
+        rhiza.render_argv(tpl, {"init": "2026-09-28", "bbox": None}, requires_region=True, skill="ecmwf-fetch")
+
+
+def test_render_argv_missing_field_is_a_clear_error():
+    with pytest.raises(ValueError, match="start"):
+        rhiza.render_argv(["--start-time", "{start}"], {"init": "2026-09-28"}, skill="chirps-fetch")
