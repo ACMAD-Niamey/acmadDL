@@ -80,6 +80,10 @@ def test_tool_schemas_have_descriptions():
         assert tool.input_schema.get("type") == "object"
 
 
+def test_list_products_includes_rhiza_family():
+    assert any("rhiza/" in str(p) for p in server.list_products())
+
+
 def test_list_products_is_json_safe():
     products = server.list_products()
     assert products and all("product" in p and "adapter" in p for p in products)

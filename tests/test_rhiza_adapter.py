@@ -460,3 +460,51 @@ def test_health_remote_probe_list_form_and_failure(monkeypatch):
     cfg = {**RHIZA_FC, "argv": ["--date", "{init}", "--outlook", "7d", "-v", "{variable}"], "probe_latest": ["--probe-latest", "ts"]}
     r = rhiza.RhizaAdapter().health_check(cfg, probe_remote=True)
     assert r["healthy"] is False and r["kind"] == "remote" and "archive unreachable" in r["message"]
+
+
+# ── catalog contract ────────────────────────────────────────────────────────
+
+RHIZA_PRODUCTS = [
+    "rhiza/ecmwf-s2s", "rhiza/ifs-ens-15d", "rhiza/ifs-ens-46d", "rhiza/ifs-ens-46d-6h",
+    "rhiza/aifs-ens", "rhiza/aifs-single", "rhiza/gefs-35d", "rhiza/gfs",
+    "rhiza/icon-eu-5d", "rhiza/hrdps", "rhiza/hrrr-48h",
+    "rhiza/subc-mme-7d", "rhiza/subc-mme-15d", "rhiza/subc-mme-30d",
+    "rhiza/chirps-daily", "rhiza/imerg-daily", "rhiza/imerg-daily-final",
+    "rhiza/imerg-early-30min", "rhiza/imerg-late-30min",
+    "rhiza/gefs-analysis", "rhiza/gfs-analysis", "rhiza/hrrr-analysis", "rhiza/mrms-hourly",
+    "rhiza/era5", "rhiza/oisst-daily", "rhiza/smap-daily", "rhiza/cmip6",
+]
+
+
+def test_catalog_has_every_rhiza_product():
+    from acmaddl import catalog
+    listed = [p for p in catalog.list_products() if p.startswith("rhiza/")]
+    assert sorted(listed) == sorted(RHIZA_PRODUCTS)
+
+
+@pytest.mark.parametrize("product", RHIZA_PRODUCTS)
+def test_rhiza_entry_contract(product):
+    from acmaddl import catalog
+    cfg = catalog.info(product)
+    assert cfg["adapter"] == "rhiza"
+    assert cfg.get("provider", "weather-skills") in ("weather-skills", "chc-skills")
+    assert cfg["skill"] and isinstance(cfg["argv"], list) and cfg["argv"]
+    joined = " ".join(map(str, cfg["argv"]))
+    assert ("{init}" in joined) != ("{start}" in joined), "forecast XOR observation"
+    assert "{variable}" in joined or cfg["skill"] in ("oisst-fetch", "chirps-fetch", "imerg-fetch", "smap-fetch")
+    for v in cfg["variables"].values():
+        assert {"native_name", "units", "target_units"} <= set(v)
+    assert "notes" in cfg and "grid" in cfg
+    if cfg.get("window_days"):
+        assert "{start}" in joined
+    if cfg.get("credentials"):
+        assert cfg["credentials"] == "ecds"
+
+
+@needs_group
+@pytest.mark.parametrize("product", RHIZA_PRODUCTS)
+def test_rhiza_entry_skill_exists_in_pinned_package(product):
+    from acmaddl import catalog
+    cfg = catalog.info(product)
+    fn, version = rhiza.load_entrypoint(cfg.get("provider", "weather-skills"), cfg["skill"], cfg.get("entrypoint", "fetch"))
+    assert hasattr(fn, "parser") and version

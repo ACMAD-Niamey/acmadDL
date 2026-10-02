@@ -37,14 +37,20 @@ _GROUP_COLOR = {                        # black = the smallest group (CHC)
     ("Seasonal forecasts", "NMME"): "#d4a500",                   # yellow
     ("Sub-seasonal forecasts", "C3S / Copernicus"): "#2ca02c",   # green
     ("Sub-seasonal forecasts", "CHC forecasts"): "#1a1a1a",      # black
+    ("Observations", "Rhiza weather-skills"): "#8e6c8a",          # mauve
+    ("Sub-seasonal forecasts", "Rhiza weather-skills"): "#8e6c8a",
 }
 _SUBCAT_ORDER = ["Precipitation", "Sea-surface temperature",
                  "Reanalysis (multi-variable)",
-                 "C3S / Copernicus", "NMME", "CHC forecasts"]
+                 "C3S / Copernicus", "NMME", "CHC forecasts", "Rhiza weather-skills"]
 
 
 def _classify(name, entry=None):
     """(section, subcategory) for a product id."""
+    if name.startswith("rhiza/"):
+        argv = " ".join(map(str, (entry or {}).get("argv", [])))
+        section = "Sub-seasonal forecasts" if "{init}" in argv else "Observations"
+        return section, "Rhiza weather-skills"
     if name.startswith("obs/"):
         vs = set((entry or {}).get("variables") or {})
         if len(vs) > 1:
@@ -72,6 +78,7 @@ _ADAPTER_LABEL = {
     "iridl": "IRI Data Library",
     "sheerwater": "Sheerwater",
     "cpc_binary": "NOAA CPC",
+    "rhiza": "Rhiza weather-skills",
 }
 
 _YEAR_MIN, _YEAR_MAX = 1978, 2028
