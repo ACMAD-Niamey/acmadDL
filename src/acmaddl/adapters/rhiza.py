@@ -229,19 +229,26 @@ def reshape_forecast(ds, init):
     return ds
 
 
-def observation_windows(date_range, init_months, window_days, today):
+def observation_windows(date_range, init_months, window_days, today, *, latest=None, allow_future=False):
     """[start, end] date windows for an observation request.
 
     acmadDL's observation API is year-based (``hindcast=(y0, y1)``) with an
     optional ``months=`` filter (``init_months``). Each year's selected months
-    collapse into contiguous runs, clipped to yesterday, then split into
-    chunks of at most ``window_days`` days. No ``hindcast`` at all means the
-    trailing ``window_days`` (default 10) days ending yesterday.
+    collapse into contiguous runs, clipped to the last published day, then
+    split into chunks of at most ``window_days`` days. No ``hindcast`` at all
+    means the trailing ``window_days`` (default 10) days ending there.
+
+    The last published day is ``latest`` (the skill's own ``--probe-latest``)
+    when known, else yesterday. Their fetchers refuse a window with no data in
+    it, so asking past that day would fail inside the skill. ``allow_future``
+    (CMIP6 scenarios) disables the clip altogether.
     """
-    yesterday = today - timedelta(days=1)
+    end_cap = today - timedelta(days=1)
+    if latest is not None:
+        end_cap = min(end_cap, latest)
     if date_range is None:
         n = int(window_days or 10)
-        spans = [(yesterday - timedelta(days=n - 1), yesterday)]
+        spans = [(end_cap - timedelta(days=n - 1), end_cap)]
     else:
         y0, y1 = int(date_range[0]), int(date_range[1])
         months = sorted({int(m) for m in init_months}) if init_months else list(range(1, 13))
@@ -254,11 +261,13 @@ def observation_windows(date_range, init_months, window_days, today):
                     run = []
                 if m is not None:
                     run.append(m)
-        spans = [(s, min(e, yesterday)) for s, e in spans if s <= yesterday]
+        if not allow_future:
+            spans = [(s, min(e, end_cap)) for s, e in spans if s <= end_cap]
         if not spans:
+            what = "not published yet" if latest is not None else "entirely in the future"
             raise ValueError(
-                f"observation window {date_range} / months={init_months} lies entirely in the future "
-                f"(today is {today.isoformat()})"
+                f"observation window {date_range} / months={init_months} is {what} "
+                f"(last available day {end_cap.isoformat()}, today {today.isoformat()})"
             )
     if not window_days:
         return spans
@@ -372,7 +381,15 @@ class RhizaAdapter(AdapterBase):
                 out = run_skill(fn, argv, tmp / "out.zarr", env=env, verbose=verbose, skill=skill)
                 ds = reshape_forecast(open_output(out), date.fromisoformat(init))
             else:
-                windows = observation_windows(date_range, cfg.get("init_months"), cfg.get("window_days"), _today())
+                latest = None
+                if cfg.get("probe_latest") and not cfg.get("allow_future"):
+                    text = self._probe_latest(fn, cfg)
+                    try:
+                        latest = date.fromisoformat(text)
+                    except ValueError:
+                        latest = None            # 'none': the skill has no realtime cap
+                windows = observation_windows(date_range, cfg.get("init_months"), cfg.get("window_days"),
+                                              _today(), latest=latest, allow_future=bool(cfg.get("allow_future")))
                 parts = []
                 for k, (start, end) in enumerate(windows):
                     argv = render_argv(template, {**fields, "start": start.isoformat(), "end": end.isoformat()},
@@ -423,16 +440,26 @@ class RhizaAdapter(AdapterBase):
         probe = cfg.get("probe_latest")
         if not probe_remote or not probe:
             return ok
-        argv = self._static_argv(cfg.get("argv", [])) + (list(probe) if isinstance(probe, (list, tuple)) else ["--probe-latest"])
+        try:
+            latest = self._probe_latest(fn, cfg)
+        except RhizaSkillError as exc:
+            return {**base, "healthy": False, "kind": "remote", "message": str(exc)}
+        return {**base, "healthy": True, "kind": "remote", "latest": latest,
+                "message": f"{skill} v{version}: latest available {latest}."}
+
+    def _probe_latest(self, fn, cfg):
+        """Run the skill's own ``--probe-latest``; the last stdout line (a date, or 'none')."""
+        probe = cfg.get("probe_latest")
+        argv = self._static_argv(cfg.get("argv", [])) + (
+            list(probe) if isinstance(probe, (list, tuple)) else ["--probe-latest"])
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 fn(argv)
             except SystemExit as exc:
                 if exc.code not in (0, None):
-                    return {**base, "healthy": False, "kind": "remote",
-                            "message": f"{skill} {' '.join(argv)}: {err.getvalue().strip() or exc.code}"}
+                    raise RhizaSkillError(
+                        f"{cfg.get('skill', '?')} {' '.join(argv)}: {err.getvalue().strip() or exc.code}"
+                    ) from None
         lines = [ln.strip() for ln in out.getvalue().splitlines() if ln.strip()]
-        latest = lines[-1] if lines else "none"
-        return {**base, "healthy": True, "kind": "remote", "latest": latest,
-                "message": f"{skill} v{version}: latest available {latest}."}
+        return lines[-1] if lines else "none"

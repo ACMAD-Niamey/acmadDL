@@ -38,6 +38,8 @@
 #                      crop each chunk to the bbox as it loads
 #     credentials:     "ecds" maps CDSAPI/cdsapirc ECDS tokens to their env vars
 #     probe_latest:    true, or a token list, for the remote health probe
+#                      (also clips observation windows to the published latest day)
+#     allow_future:    true -> observation windows may lie in the future (CMIP6 scenarios)
 #   Member 0 of their ensembles is the control run and is kept. lead_time is a
 #   timedelta (native steps). No reforecast stream exists through these entries.
 #
@@ -2429,6 +2431,7 @@ rhiza/cmip6:
   provider: weather-skills
   skill: cmip6-fetch
   argv: ["--model", "GFDL-CM4", "--experiment", "ssp245", "--table", "Amon", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
+  allow_future: true
   variables:
     precip: {native_name: pr, units: "mm/day", target_units: "mm/day"}
     temp: {native_name: tas, units: C, target_units: C}
@@ -2441,4 +2444,4 @@ rhiza/cmip6:
     CMIP6 projection via Rhiza weather-skills cmip6-fetch (Pangeo Google Cloud,
     credential-free), pinned to GFDL-CM4 / ssp245 / Amon. Other model-scenario pairs are
     a copied catalog block with different argv. Monthly; future years allowed.
-
+    Request at least two months: their skill needs two time points to stamp the interval.

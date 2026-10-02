@@ -508,3 +508,41 @@ def test_rhiza_entry_skill_exists_in_pinned_package(product):
     cfg = catalog.info(product)
     fn, version = rhiza.load_entrypoint(cfg.get("provider", "weather-skills"), cfg["skill"], cfg.get("entrypoint", "fetch"))
     assert hasattr(fn, "parser") and version
+
+
+# ── windows clipped to the product's published latest; future allowed for projections ──
+
+def test_windows_clip_to_latest_and_drop_windows_past_it():
+    today = date(2026, 10, 2)
+    w = rhiza.observation_windows((2026, 2026), [9], 10, today, latest=date(2026, 9, 25))
+    assert w == [(date(2026, 9, 1), date(2026, 9, 10)), (date(2026, 9, 11), date(2026, 9, 20)),
+                 (date(2026, 9, 21), date(2026, 9, 25))]
+    with pytest.raises(ValueError, match="not published"):
+        rhiza.observation_windows((2026, 2026), [10], 10, today, latest=date(2026, 9, 25))
+
+
+def test_windows_trailing_default_ends_at_latest():
+    today = date(2026, 10, 2)
+    assert rhiza.observation_windows(None, None, 3, today, latest=date(2026, 9, 25)) == [
+        (date(2026, 9, 23), date(2026, 9, 25))]
+
+
+def test_windows_allow_future_skips_clipping():
+    w = rhiza.observation_windows((2030, 2030), [1], None, date(2026, 10, 2), allow_future=True)
+    assert w == [(date(2030, 1, 1), date(2030, 1, 31))]
+
+
+def test_fetch_obs_probes_latest_when_entry_supports_it(fake_catalog, monkeypatch):
+    monkeypatch.setattr(rhiza, "_today", lambda: date(2026, 10, 2))
+    from acmaddl import catalog
+    base = fake_catalog["chirps-fetch"]
+    def fn(argv):
+        if "--probe-latest" in argv:
+            print("2026-09-25")
+            raise SystemExit(0)
+        return base(argv)
+    fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (fn, "9.9.9"))
+    cfg = {**RHIZA_OBS, "probe_latest": True}
+    rhiza.RhizaAdapter().fetch_data(cfg | {"init_months": [9]}, "precip", date_range=(2026, 2026), region=[-1, 1, 36, 38])
+    assert base.calls[-1][:4] == ["--start-time", "2026-09-25", "--end-time", "2026-09-25"]
