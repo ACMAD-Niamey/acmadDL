@@ -41,10 +41,14 @@ class TestImportShim:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 import rosetta
-            hits = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-            print(len(hits), "acmaddl" in str(hits[0].message))
+            # Only the shim's own warning counts: third-party libraries (dask
+            # under numpy>=2.5, for one) emit their own DeprecationWarnings on
+            # import, and those are not what this test guards.
+            hits = [w for w in caught if issubclass(w.category, DeprecationWarning)
+                    and "acmaddl" in str(w.message)]
+            print(len(hits))
         """)
-        assert out == "1 True"
+        assert out == "1"
 
     def test_rosetta_is_the_acmaddl_module_itself(self):
         out = run_py("""
