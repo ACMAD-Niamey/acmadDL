@@ -129,3 +129,70 @@ def test_obs_fixtures_have_their_raw_schema(name):
     assert {"time", "latitude", "longitude"} <= set(ds.dims)
     assert ds.sizes["time"] <= 4
     json.loads(ds.attrs["weather_skills_history"])
+
+
+# ── running a skill, reading its output, stamping ───────────────────────────
+
+import os
+import sys
+
+
+def fake_wrapper(fixture_name: str, *, exit_code=None, stderr_text="", write=True):
+    """A stand-in for a @weather_skill wrapper: copies a fixture to the -o path."""
+    def fn(argv):
+        fn.calls.append(list(argv))
+        if stderr_text:
+            print(stderr_text, file=sys.stderr)
+        if exit_code is not None:
+            raise SystemExit(exit_code)
+        if write:
+            out = Path(argv[argv.index("-o") + 1])
+            fixture(fixture_name).to_zarr(out, mode="w", consolidated=True)
+    fn.calls = []
+    fn.parser = object()
+    return fn
+
+
+def test_run_skill_writes_and_open_output_loads(tmp_path):
+    fn = fake_wrapper("ensemble_forecast")
+    out = rhiza.run_skill(fn, ["--date", "2026-09-28"], tmp_path / "o.zarr", skill="dynamical-fetch")
+    assert fn.calls == [["--date", "2026-09-28", "-o", str(tmp_path / "o.zarr")]]
+    ds = rhiza.open_output(out)
+    assert "step" in ds.dims and ds["precipitation_surface"].values.any()
+
+
+def test_run_skill_nonzero_exit_surfaces_their_message(tmp_path):
+    fn = fake_wrapper("ensemble_forecast", exit_code=2, stderr_text="Error: init 2026-09-30 is under the 2-day embargo")
+    with pytest.raises(RhizaSkillError, match="2-day embargo"):
+        rhiza.run_skill(fn, [], tmp_path / "o.zarr", skill="ecmwf-fetch")
+
+
+def test_run_skill_exit_zero_without_output_is_an_error(tmp_path):
+    fn = fake_wrapper("ensemble_forecast", exit_code=0, write=False)
+    with pytest.raises(RhizaSkillError, match="wrote no output"):
+        rhiza.run_skill(fn, [], tmp_path / "o.zarr", skill="x")
+
+
+def test_run_skill_other_exceptions_propagate(tmp_path):
+    def fn(argv):
+        raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        rhiza.run_skill(fn, [], tmp_path / "o.zarr")
+
+
+def test_run_skill_env_is_scoped(tmp_path, monkeypatch):
+    monkeypatch.delenv("ACMADDL_T", raising=False)
+    seen = {}
+    def fn(argv):
+        seen["v"] = os.environ.get("ACMADDL_T")
+        fixture("daily_obs").to_zarr(Path(argv[argv.index("-o") + 1]), mode="w", consolidated=True)
+    rhiza.run_skill(fn, [], tmp_path / "o.zarr", env={"ACMADDL_T": "1"})
+    assert seen["v"] == "1" and "ACMADDL_T" not in os.environ
+
+
+def test_stamp_adds_ours_and_keeps_theirs():
+    ds = rhiza.stamp(fixture("daily_obs"), skill="chirps-fetch", version="0.0.2", provider="weather-skills")
+    assert ds.attrs["rhiza_skill"] == "chirps-fetch"
+    assert ds.attrs["rhiza_skill_version"] == "0.0.2"
+    assert len(ds.attrs["rhiza_pin"]) >= 7
+    assert "weather_skills_history" in ds.attrs and "weather_skills_source" in ds.attrs

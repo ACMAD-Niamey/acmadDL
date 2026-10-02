@@ -14,10 +14,16 @@ Design (docs/specs/2026-10-01-rhiza-weather-skills-adapter-design.md):
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata
 import importlib.util
+import io
 import json
+import os
+import warnings
 from pathlib import Path
+
+import xarray as xr
 
 from .base import AdapterBase
 from ..errors import RhizaNotInstalled, RhizaSkillError
@@ -118,6 +124,65 @@ def render_argv(template, fields, *, requires_region=False, skill=""):
             ) from None
         i += 1
     return out
+
+
+@contextlib.contextmanager
+def _environ(mapping):
+    """Temporarily set environment variables; restore (or unset) afterwards."""
+    saved = {k: os.environ.get(k) for k in mapping}
+    try:
+        os.environ.update({k: str(v) for k, v in mapping.items()})
+        yield
+    finally:
+        for k, old in saved.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
+
+
+def run_skill(fn, argv, out_path, *, env=None, verbose=False, skill=""):
+    """Call a ``@weather_skill`` wrapper as the CLI would, writing to ``out_path``.
+
+    Their decorator prints the reason for a refusal to stderr and exits
+    non-zero; that text becomes the ``RhizaSkillError`` message. Exit 0 with
+    nothing written (the skill returned ``None``) is also an error here.
+    """
+    out_path = Path(out_path)
+    full = [*argv, "-o", str(out_path)]
+    err = io.StringIO()
+    with _environ(env or {}), contextlib.redirect_stderr(err):
+        try:
+            fn(full)
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+            if code != 0:
+                text = err.getvalue().strip() or f"exit status {code}"
+                raise RhizaSkillError(f"{skill or 'skill'} {' '.join(argv)}: {text}") from None
+    if verbose and err.getvalue().strip():
+        print(f"[acmaddl:rhiza] {skill}: {err.getvalue().strip()}")
+    if not out_path.exists():
+        raise RhizaSkillError(f"{skill or 'skill'} exited 0 but wrote no output at {out_path}")
+    return out_path
+
+
+def open_output(path):
+    """Eagerly load a skill's Zarr so its temporary directory can go away."""
+    with warnings.catch_warnings():
+        # zarr 3 warns that consolidated metadata is not in the v3 spec; their
+        # standard dataset contract writes it on purpose.
+        warnings.simplefilter("ignore")
+        with xr.open_zarr(path, consolidated=True) as ds:
+            return ds.load()
+
+
+def stamp(ds, *, skill, version, provider):
+    """Record which skill produced this dataset next to their own provenance."""
+    ds = ds.copy()
+    ds.attrs["rhiza_skill"] = skill
+    ds.attrs["rhiza_skill_version"] = version
+    ds.attrs["rhiza_pin"] = provider_pin(provider)
+    return ds
 
 
 class RhizaAdapter(AdapterBase):
