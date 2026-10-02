@@ -411,3 +411,52 @@ def test_fetch_output_round_trips_to_netcdf(fake_catalog, tmp_path):
                         destination=str(tmp_path / "fc.nc"), format="netcdf")
     assert (tmp_path / "fc.nc").exists()
     assert isinstance(out["lat"].attrs["statistics_approximate"], str)
+
+
+# ── health check ────────────────────────────────────────────────────────────
+
+def test_health_config_reports_missing_group(monkeypatch):
+    def missing(*a, **k):
+        raise RhizaNotInstalled("weather-skills")
+    monkeypatch.setattr(rhiza, "load_entrypoint", missing)
+    r = rhiza.RhizaAdapter().health_check(RHIZA_FC)
+    assert r["healthy"] is False and r["kind"] == "config" and "uv sync --group rhiza" in r["message"]
+
+
+def test_health_config_ok_runs_help(monkeypatch):
+    fn = fake_wrapper("ensemble_forecast")
+    def help_fn(argv):
+        fn.calls.append(list(argv))
+        raise SystemExit(0)
+    help_fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (help_fn, "0.0.2"))
+    r = rhiza.RhizaAdapter().health_check(RHIZA_FC)
+    assert r["healthy"] is True and r["kind"] == "config" and "0.0.2" in r["message"]
+    assert fn.calls == [["--help"]]
+
+
+def test_health_remote_probe_parses_latest(monkeypatch):
+    def probe_fn(argv):
+        if argv == ["--help"]:
+            raise SystemExit(0)
+        assert argv == ["--dataset", "ecmwf-ifs-ens-forecast-15-day-0-25-degree", "--probe-latest"]
+        print("2026-09-30")
+        raise SystemExit(0)
+    probe_fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (probe_fn, "0.0.2"))
+    r = rhiza.RhizaAdapter().health_check({**RHIZA_FC, "probe_latest": True}, probe_remote=True)
+    assert r["healthy"] is True and r["kind"] == "remote" and r["latest"] == "2026-09-30"
+
+
+def test_health_remote_probe_list_form_and_failure(monkeypatch):
+    def probe_fn(argv):
+        if argv == ["--help"]:
+            raise SystemExit(0)
+        assert argv == ["--outlook", "7d", "--probe-latest", "ts"]
+        print("archive unreachable", file=sys.stderr)
+        raise SystemExit(1)
+    probe_fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (probe_fn, "0.1.0"))
+    cfg = {**RHIZA_FC, "argv": ["--date", "{init}", "--outlook", "7d", "-v", "{variable}"], "probe_latest": ["--probe-latest", "ts"]}
+    r = rhiza.RhizaAdapter().health_check(cfg, probe_remote=True)
+    assert r["healthy"] is False and r["kind"] == "remote" and "archive unreachable" in r["message"]

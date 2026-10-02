@@ -386,3 +386,53 @@ class RhizaAdapter(AdapterBase):
                     parts.append(part)
                 ds = parts[0] if len(parts) == 1 else xr.concat(parts, dim="time", combine_attrs="override")
         return stamp(ds, skill=skill, version=version, provider=provider)
+
+    @staticmethod
+    def _static_argv(template):
+        """Flag/value pairs of a template that do not depend on the request (``--dataset X``)."""
+        out, i = [], 0
+        while i < len(template):
+            tok, nxt = str(template[i]), (str(template[i + 1]) if i + 1 < len(template) else None)
+            if tok.startswith("-") and nxt is not None and "{" not in nxt and tok not in ("-v", "--variable"):
+                out += [tok, nxt]
+                i += 2
+            elif nxt is not None and "{" in nxt:
+                i += 2
+            else:
+                i += 1
+        return out
+
+    def health_check(self, product_config, probe_remote=False):
+        cfg = product_config
+        provider, skill = cfg.get("provider", "weather-skills"), cfg.get("skill", "?")
+        base = {"probe_remote": bool(probe_remote)}
+        try:
+            fn, version = load_entrypoint(provider, skill, cfg.get("entrypoint", "fetch"))
+        except (RhizaNotInstalled, RhizaSkillError) as exc:
+            return {**base, "healthy": False, "kind": "config", "message": str(exc)}
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            try:
+                fn(["--help"])
+            except SystemExit as exc:
+                if exc.code not in (0, None):
+                    return {**base, "healthy": False, "kind": "config",
+                            "message": f"{skill} --help exited {exc.code}: {err.getvalue().strip()}"}
+        ok = {**base, "healthy": True, "kind": "config",
+              "message": f"{skill} v{version} ({provider}) loads and answers --help."}
+        probe = cfg.get("probe_latest")
+        if not probe_remote or not probe:
+            return ok
+        argv = self._static_argv(cfg.get("argv", [])) + (list(probe) if isinstance(probe, (list, tuple)) else ["--probe-latest"])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                fn(argv)
+            except SystemExit as exc:
+                if exc.code not in (0, None):
+                    return {**base, "healthy": False, "kind": "remote",
+                            "message": f"{skill} {' '.join(argv)}: {err.getvalue().strip() or exc.code}"}
+        lines = [ln.strip() for ln in out.getvalue().splitlines() if ln.strip()]
+        latest = lines[-1] if lines else "none"
+        return {**base, "healthy": True, "kind": "remote", "latest": latest,
+                "message": f"{skill} v{version}: latest available {latest}."}
