@@ -20,7 +20,9 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import tempfile
+import threading
 import warnings
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -34,6 +36,11 @@ from ..errors import RhizaNotInstalled, RhizaSkillError
 from ..normalize import select_lon
 
 INSTALL_HINT = "uv sync --group rhiza"
+
+# Their wrapper is called with sys.stdout/sys.stderr redirected and (for ECDS)
+# os.environ edited — both process-wide. The MCP server runs fetches on
+# threads, so every skill call, help probe and --probe-latest holds this lock.
+_SKILL_LOCK = threading.Lock()
 
 # (provider, skill, entrypoint) -> (wrapper, _SKILL_VERSION). Loading executes
 # the script module (imports cfgrib, dynamical_catalog, ...), so do it once.
@@ -156,7 +163,7 @@ def run_skill(fn, argv, out_path, *, env=None, verbose=False, skill=""):
     out_path = Path(out_path)
     full = [*argv, "-o", str(out_path)]
     err = io.StringIO()
-    with _environ(env or {}), contextlib.redirect_stderr(err):
+    with _SKILL_LOCK, _environ(env or {}), contextlib.redirect_stderr(err):
         try:
             fn(full)
         except SystemExit as exc:
@@ -246,6 +253,8 @@ def observation_windows(date_range, init_months, window_days, today, *, latest=N
     end_cap = today - timedelta(days=1)
     if latest is not None:
         end_cap = min(end_cap, latest)
+    if date_range is None and init_months:
+        date_range = (today.year, today.year)   # months= alone means those months of this year
     if date_range is None:
         n = int(window_days or 10)
         spans = [(end_cap - timedelta(days=n - 1), end_cap)]
@@ -354,6 +363,16 @@ class RhizaAdapter(AdapterBase):
         verbose = bool(cfg.get("_verbose"))
         native = cfg["variables"][variable]["native_name"]
         requires_region = bool(cfg.get("requires_region"))
+        if cfg.get("_reforecast"):
+            raise ValueError(
+                f"{skill}: reforecasts are not available through rhiza/* products (no reforecast "
+                "stream). For ECMWF S2S hindcasts use c3s/ecmwf-s2s with reforecast=True."
+            )
+        if "forecast_type" in cfg:
+            raise ValueError(
+                f"{skill}: forecast_type is not supported on rhiza/* products; member 0 is the "
+                "control run and is always included."
+            )
         fn, version = load_entrypoint(provider, skill, entrypoint)
         env = ecds_environment() if cfg.get("credentials") == "ecds" else {}
         fields = {"variable": native, "bbox": bbox_nwse(region) if region else None}
@@ -380,6 +399,7 @@ class RhizaAdapter(AdapterBase):
                     print(f"[acmaddl:rhiza] {skill} {' '.join(argv)}")
                 out = run_skill(fn, argv, tmp / "out.zarr", env=env, verbose=verbose, skill=skill)
                 ds = reshape_forecast(open_output(out), date.fromisoformat(init))
+                shutil.rmtree(out, ignore_errors=True)
             else:
                 latest = None
                 if cfg.get("probe_latest") and not cfg.get("allow_future"):
@@ -390,14 +410,22 @@ class RhizaAdapter(AdapterBase):
                         latest = None            # 'none': the skill has no realtime cap
                 windows = observation_windows(date_range, cfg.get("init_months"), cfg.get("window_days"),
                                               _today(), latest=latest, allow_future=bool(cfg.get("allow_future")))
+                # end_exclusive: the skill slices its time axis to `end 00:00`
+                # (dynamical-fetch analyses), so ask for end+1 and trim back.
+                end_exclusive = bool(cfg.get("end_exclusive"))
                 parts = []
                 for k, (start, end) in enumerate(windows):
-                    argv = render_argv(template, {**fields, "start": start.isoformat(), "end": end.isoformat()},
+                    asked_end = end + timedelta(days=1) if end_exclusive else end
+                    argv = render_argv(template, {**fields, "start": start.isoformat(), "end": asked_end.isoformat()},
                                        requires_region=requires_region, skill=skill)
                     if verbose:
                         print(f"[acmaddl:rhiza] {skill} {' '.join(argv)} ({k + 1}/{len(windows)})")
                     out = run_skill(fn, argv, tmp / f"out{k}.zarr", env=env, verbose=verbose, skill=skill)
                     part = open_output(out)
+                    shutil.rmtree(out, ignore_errors=True)   # each global chunk leaves disk as soon as it is in memory
+                    if end_exclusive and "time" in part.dims:
+                        last = np.datetime64(datetime(end.year, end.month, end.day), "ns") + np.timedelta64(1, "D") - np.timedelta64(1, "ns")
+                        part = part.sel(time=slice(None, last))
                     if region is not None:
                         part = crop_region(part, region)
                     parts.append(part)
@@ -428,7 +456,7 @@ class RhizaAdapter(AdapterBase):
         except (RhizaNotInstalled, RhizaSkillError) as exc:
             return {**base, "healthy": False, "kind": "config", "message": str(exc)}
         err = io.StringIO()
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        with _SKILL_LOCK, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             try:
                 fn(["--help"])
             except SystemExit as exc:
@@ -453,7 +481,7 @@ class RhizaAdapter(AdapterBase):
         argv = self._static_argv(cfg.get("argv", [])) + (
             list(probe) if isinstance(probe, (list, tuple)) else ["--probe-latest"])
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with _SKILL_LOCK, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 fn(argv)
             except SystemExit as exc:

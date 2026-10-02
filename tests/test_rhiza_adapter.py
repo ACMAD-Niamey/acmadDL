@@ -546,3 +546,88 @@ def test_fetch_obs_probes_latest_when_entry_supports_it(fake_catalog, monkeypatc
     cfg = {**RHIZA_OBS, "probe_latest": True}
     rhiza.RhizaAdapter().fetch_data(cfg | {"init_months": [9]}, "precip", date_range=(2026, 2026), region=[-1, 1, 36, 38])
     assert base.calls[-1][:4] == ["--start-time", "2026-09-25", "--end-time", "2026-09-25"]
+
+
+# ── final-review fixes ──────────────────────────────────────────────────────
+
+def test_run_skill_and_probe_hold_the_skill_lock(tmp_path):
+    """stdout/stderr redirects and os.environ edits are process-wide; the MCP server
+    runs fetches on threads, so every skill call must hold one lock."""
+    seen = {}
+    def fn(argv):
+        seen["locked"] = rhiza._SKILL_LOCK.locked()
+        if "--probe-latest" in argv:
+            print("2026-09-25")
+            raise SystemExit(0)
+        fixture("daily_obs").to_zarr(Path(argv[argv.index("-o") + 1]), mode="w", consolidated=True)
+    fn.parser = object()
+    rhiza.run_skill(fn, [], tmp_path / "o.zarr")
+    assert seen["locked"] is True
+    seen.clear()
+    assert rhiza.RhizaAdapter()._probe_latest(fn, {"probe_latest": True, "argv": []}) == "2026-09-25"
+    assert seen["locked"] is True
+    assert not rhiza._SKILL_LOCK.locked()
+
+
+def test_fetch_obs_deletes_each_chunk_before_the_next(fake_catalog, monkeypatch):
+    monkeypatch.setattr(rhiza, "_today", lambda: date(2026, 10, 1))
+    base = fake_catalog["chirps-fetch"]
+    outs = []
+    def fn(argv):
+        out = Path(argv[argv.index("-o") + 1])
+        assert all(not p.exists() for p in outs), "previous chunk still on disk"
+        outs.append(out)
+        return base(argv)
+    fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (fn, "9.9.9"))
+    acmaddl.fetch("rhiza/_test-obs", "precip", hindcast=(2026, 2026), months=[9], region=[-1, 1, 36, 38], cache=False)
+    assert len(outs) == 15
+
+
+def test_end_exclusive_entries_get_the_last_day_in_full(fake_catalog, monkeypatch):
+    """dynamical-fetch's analysis branch slices time to `end 00:00`; an end_exclusive
+    entry asks for end+1 and trims back, so the last day keeps its sub-daily steps."""
+    import pandas as pd
+    monkeypatch.setattr(rhiza, "_today", lambda: date(2026, 10, 2))
+    def fn(argv):
+        s = pd.Timestamp(argv[argv.index("--start-time") + 1])
+        e = pd.Timestamp(argv[argv.index("--end-time") + 1])
+        times = pd.date_range(s, e, freq="3h")          # inclusive of e 00:00, like their slice
+        ds = xr.Dataset({"precip": (("time", "latitude", "longitude"), np.ones((len(times), 3, 3), "float32"), {"units": "mm/day"})},
+                        coords={"time": times, "latitude": [1.0, 0.0, -1.0], "longitude": [36.0, 37.0, 38.0]},
+                        attrs={"weather_skills_history": "[]", "weather_skills_source": "t"})
+        ds.to_zarr(Path(argv[argv.index("-o") + 1]), mode="w", consolidated=True)
+    fn.parser = object()
+    monkeypatch.setattr(rhiza, "load_entrypoint", lambda *a, **k: (fn, "9.9.9"))
+    cfg = {**RHIZA_OBS, "window_days": None, "end_exclusive": True}
+    ds = rhiza.RhizaAdapter().fetch_data(cfg | {"init_months": [9]}, "precip", date_range=(2026, 2026), region=[-1, 1, 36, 38])
+    assert str(ds["time"].values.max())[:16] == "2026-09-30T21:00"
+    assert ds.sizes["time"] == 30 * 8
+
+
+def test_cache_key_folds_today_for_windows_reaching_the_present(fake_catalog, monkeypatch):
+    """The trailing window and a clipped current month must not be cached under a
+    day-independent key, or the first fetch would be served forever."""
+    fetch_mod = sys.modules["acmaddl.fetch"]        # acmaddl.fetch the attribute is the function
+    seen = []
+    def fake_cached(product, variable, config, date_range, region, init_months=None, init_date=None, target_months=None, **kw):
+        seen.append(init_date)
+        return rhiza.RhizaAdapter().fetch_data(config, variable, date_range=date_range, region=region)
+    monkeypatch.setattr(fetch_mod, "_fetch_raw_cached", fake_cached)
+    today = date.today()
+    acmaddl.fetch("rhiza/_test-obs", "precip", region=[-1, 1, 36, 38])                                   # trailing
+    acmaddl.fetch("rhiza/_test-obs", "precip", hindcast=(today.year, today.year), months=[today.month], region=[-1, 1, 36, 38])
+    acmaddl.fetch("rhiza/_test-obs", "precip", hindcast=(2020, 2020), months=[3], region=[-1, 1, 36, 38])  # historical
+    assert seen == [today.isoformat(), today.isoformat(), None]
+
+
+def test_windows_months_without_hindcast_mean_the_current_year():
+    today = date(2026, 10, 2)
+    assert rhiza.observation_windows(None, [9], None, today) == [(date(2026, 9, 1), date(2026, 9, 30))]
+
+
+def test_reforecast_and_forecast_type_are_refused(fake_catalog):
+    with pytest.raises(ValueError, match="reforecast"):
+        acmaddl.fetch("rhiza/_test-fc", "precip", init="2026-09-28", region=[-1, 1, 36, 38], cache=False, reforecast=True)
+    with pytest.raises(ValueError, match="forecast_type"):
+        acmaddl.fetch("rhiza/_test-fc", "precip", init="2026-09-28", region=[-1, 1, 36, 38], cache=False, forecast_type="control_forecast")

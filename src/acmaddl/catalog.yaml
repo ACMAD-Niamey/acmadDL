@@ -40,6 +40,10 @@
 #     probe_latest:    true, or a token list, for the remote health probe
 #                      (also clips observation windows to the published latest day)
 #     allow_future:    true -> observation windows may lie in the future (CMIP6 scenarios)
+#     end_exclusive:   true -> the skill slices its time axis to `--end-time 00:00`
+#                      (dynamical-fetch analyses): acmaddl asks for end+1 and trims back.
+#                      Do not combine window_days with a sub-daily product: the same
+#                      00:00 cut would drop steps at every chunk seam.
 #   Member 0 of their ensembles is the control run and is kept. lead_time is a
 #   timedelta (native steps). No reforecast stream exists through these entries.
 #
@@ -2201,6 +2205,7 @@ rhiza/gefs-analysis:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "noaa-gefs-analysis", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
@@ -2220,6 +2225,7 @@ rhiza/gfs-analysis:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "noaa-gfs-analysis", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
@@ -2239,6 +2245,7 @@ rhiza/imerg-early-30min:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "nasa-imerg-analysis-early", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
@@ -2257,6 +2264,7 @@ rhiza/imerg-late-30min:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "nasa-imerg-analysis-late", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
@@ -2275,6 +2283,7 @@ rhiza/hrrr-analysis:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "noaa-hrrr-analysis", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
@@ -2294,6 +2303,7 @@ rhiza/mrms-hourly:
   adapter: rhiza
   provider: weather-skills
   skill: dynamical-fetch
+  end_exclusive: true
   argv: ["--dataset", "noaa-mrms-conus-analysis-hourly", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:

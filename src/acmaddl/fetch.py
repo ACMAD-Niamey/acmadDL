@@ -468,6 +468,20 @@ def fetch(product, variable, init=None, target=None, region=None,
             config["target_range"] = target_range
             cache_target_months = tuple(target_months)
 
+    # rhiza/* observation windows are clipped to what the skill has published,
+    # and the no-hindcast default is a trailing window ending there. Either
+    # would cache a partial, day-dependent result under a day-independent key
+    # (the trailing window: forever). Fold today's date into the otherwise
+    # unused init_date slot for windows that reach the present; historical
+    # windows and future projections (allow_future) keep stable keys.
+    if config.get("adapter") == "rhiza" and init is None and not config.get("allow_future"):
+        from datetime import date as _date
+        _today = _date.today()
+        _months = config.get("init_months") or list(range(1, 13))
+        _year_end = date_range[1] if date_range else _today.year
+        if date_range is None or (_year_end >= _today.year and max(_months) >= _today.month):
+            cache_init_date = _today.isoformat()
+
     # A non-default forecast_type selects a different set of members from the
     # same product/variable/init/region, so it must fork the cache key or the
     # control run and the perturbed ensemble would be served each other's data.
