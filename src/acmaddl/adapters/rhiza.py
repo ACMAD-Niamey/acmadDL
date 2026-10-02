@@ -271,6 +271,46 @@ def crop_region(ds, region):
     return select_lon(ds, lon_w, lon_e, lon_name=lon_name)
 
 
+def _read_rc(path):
+    """``key: value`` lines of a cdsapirc-style file -> dict (missing file -> {})."""
+    out = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            k, sep, v = line.partition(":")
+            if sep:
+                out[k.strip()] = v.strip()
+    return out
+
+
+def ecds_environment(home=None):
+    """Environment to give ecmwf-fetch so it finds ECMWF Data Store credentials.
+
+    Their script requires ``ECMWF_DATASTORES_URL`` and ``ECMWF_DATASTORES_KEY``
+    (or ``~/.ecmwfdatastoresrc``, which their client reads itself). acmadDL
+    users usually hold the same token in ``~/.cdsapirc`` or ``CDSAPI_URL`` /
+    ``CDSAPI_KEY`` for ``c3s/ecmwf-s2s``; map those across only when they point
+    at the ECDS. A Copernicus CDS token is a different credential, so that
+    case is refused with instructions rather than sent and rejected upstream.
+    """
+    home = Path(home) if home is not None else Path.home()
+    if os.environ.get("ECMWF_DATASTORES_URL") and os.environ.get("ECMWF_DATASTORES_KEY"):
+        return {}
+    if (home / ".ecmwfdatastoresrc").exists():
+        return {}
+    url, key = os.environ.get("CDSAPI_URL"), os.environ.get("CDSAPI_KEY")
+    if not (url and key):
+        rc = _read_rc(home / ".cdsapirc")
+        url, key = url or rc.get("url"), key or rc.get("key")
+    if url and key and "ecds.ecmwf.int" in url:
+        return {"ECMWF_DATASTORES_URL": url, "ECMWF_DATASTORES_KEY": key}
+    raise RhizaSkillError(
+        "rhiza/ecmwf-s2s needs ECMWF Data Store credentials: set ECMWF_DATASTORES_URL="
+        "https://ecds.ecmwf.int/api and ECMWF_DATASTORES_KEY (or create ~/.ecmwfdatastoresrc), "
+        "or point ~/.cdsapirc at https://ecds.ecmwf.int/api. A Copernicus CDS "
+        "(cds.climate.copernicus.eu) key is a different token and will not work."
+    )
+
+
 class RhizaAdapter(AdapterBase):
     """Catalog entries: ``adapter: rhiza``; see module docstring and catalog.yaml header."""
 

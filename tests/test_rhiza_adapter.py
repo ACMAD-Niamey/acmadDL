@@ -283,3 +283,44 @@ def test_crop_region_seam_crossing_box_uses_select_lon():
                     coords={"latitude": [1.0, 0.0], "longitude": lon})
     out = rhiza.crop_region(ds, [0.0, 1.0, -70.0, 70.0])
     assert sorted(out["longitude"].values.tolist()) == [0.0, 60.0, 300.0]
+
+
+# ── ECDS credential mapping ─────────────────────────────────────────────────
+
+def _clear_cred_env(monkeypatch):
+    for k in ("ECMWF_DATASTORES_URL", "ECMWF_DATASTORES_KEY", "CDSAPI_URL", "CDSAPI_KEY"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_ecds_env_noop_when_their_variables_exist(monkeypatch, tmp_path):
+    _clear_cred_env(monkeypatch)
+    monkeypatch.setenv("ECMWF_DATASTORES_URL", "https://ecds.ecmwf.int/api")
+    monkeypatch.setenv("ECMWF_DATASTORES_KEY", "k")
+    assert rhiza.ecds_environment(home=tmp_path) == {}
+
+
+def test_ecds_env_noop_when_their_rc_file_exists(monkeypatch, tmp_path):
+    _clear_cred_env(monkeypatch)
+    (tmp_path / ".ecmwfdatastoresrc").write_text("url: https://ecds.ecmwf.int/api\nkey: k\n")
+    assert rhiza.ecds_environment(home=tmp_path) == {}
+
+
+def test_ecds_env_maps_an_ecds_cdsapirc(monkeypatch, tmp_path):
+    _clear_cred_env(monkeypatch)
+    (tmp_path / ".cdsapirc").write_text("url: https://ecds.ecmwf.int/api\nkey: abc-123\n")
+    assert rhiza.ecds_environment(home=tmp_path) == {
+        "ECMWF_DATASTORES_URL": "https://ecds.ecmwf.int/api", "ECMWF_DATASTORES_KEY": "abc-123"}
+
+
+def test_ecds_env_refuses_a_copernicus_cdsapirc(monkeypatch, tmp_path):
+    _clear_cred_env(monkeypatch)
+    (tmp_path / ".cdsapirc").write_text("url: https://cds.climate.copernicus.eu/api\nkey: abc\n")
+    with pytest.raises(RhizaSkillError, match="ecds.ecmwf.int"):
+        rhiza.ecds_environment(home=tmp_path)
+
+
+def test_ecds_env_prefers_cdsapi_env_vars(monkeypatch, tmp_path):
+    _clear_cred_env(monkeypatch)
+    monkeypatch.setenv("CDSAPI_URL", "https://ecds.ecmwf.int/api")
+    monkeypatch.setenv("CDSAPI_KEY", "zzz")
+    assert rhiza.ecds_environment(home=tmp_path)["ECMWF_DATASTORES_KEY"] == "zzz"
