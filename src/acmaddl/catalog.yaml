@@ -23,9 +23,9 @@
 #     many systems run a larger ensemble in real time than in the hindcast.
 #     Observations/reanalysis have neither.
 #
-#   Rhiza weather-skills products (`rhiza/*`, adapter: rhiza) run a skill script
+#   Rhiza weather-skills products (`weather-skills/*`, adapter: weather_skills) run a skill script
 #   from the pinned weather-skills / chc-skills packages in-process (see
-#   adapters/rhiza.py and docs/specs/2026-10-01-rhiza-weather-skills-adapter-design.md).
+#   adapters/weather_skills.py and docs/specs/2026-10-01-weather-skills-adapter-design.md).
 #   Entry knobs:
 #     provider:        distribution holding the skill (default weather-skills)
 #     skill:           skills/<skill>/scripts/*.py inside that distribution
@@ -36,7 +36,9 @@
 #     requires_region: true -> fetch() without region= is an error (ecmwf-fetch)
 #     window_days:     observation fetchers without --bbox: chunk the window,
 #                      crop each chunk to the bbox as it loads
-#     credentials:     "ecds" maps CDSAPI/cdsapirc ECDS tokens to their env vars
+#     credentials:     "ecds" maps CDSAPI/cdsapirc ECDS tokens to their env vars;
+#                      "earthdata" requires an Earthdata Login token (~/.earthdatarc or EARTHDATA_TOKEN)
+#                      (imerg-fetch would otherwise block on an interactive prompt)
 #     probe_latest:    true, or a token list, for the remote health probe
 #                      (also clips observation windows to the published latest day)
 #     allow_future:    true -> observation windows may lie in the future (CMIP6 scenarios)
@@ -1875,10 +1877,10 @@ obs/gpcp-v2-3:
     are dropped by sanitize_for_netcdf on the way out.
 
 # ---------------------------------------------------------------------------
-# Rhiza weather-skills (rhiza/*): their fetcher scripts, run in-process.
+# Rhiza weather-skills (weather-skills/*): their fetcher scripts, run in-process.
 # ---------------------------------------------------------------------------
-rhiza/ecmwf-s2s:
-  adapter: rhiza
+weather-skills/ecmwf-s2s:
+  adapter: weather_skills
   provider: weather-skills
   skill: ecmwf-fetch
   argv: ["--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -1912,8 +1914,8 @@ rhiza/ecmwf-s2s:
     reforecast stream -- for hindcasts use c3s/ecmwf-s2s with reforecast=True.
     Precipitation is a per-step rate (mm/day). SST in degrees C (most acmaddl SST is K).
 
-rhiza/ifs-ens-15d:
-  adapter: rhiza
+weather-skills/ifs-ens-15d:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "ecmwf-ifs-ens-forecast-15-day-0-25-degree", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -1934,53 +1936,57 @@ rhiza/ifs-ens-15d:
     (member 0 = control). lead_time is a timedelta of native steps; aggregate to daily
     downstream. One issuance per fetch; no reforecasts.
 
-rhiza/ifs-ens-46d:
-  adapter: rhiza
+weather-skills/ifs-ens-46d:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
     precip: {native_name: precipitation_surface, units: "mm/day", target_units: "mm/day"}
-    temp: {native_name: temperature_2m, units: C, target_units: C}
+    temp: {native_name: average_temperature_2m, units: C, target_units: C}
+    tmax: {native_name: maximum_temperature_2m, units: C, target_units: C}
+    tmin: {native_name: minimum_temperature_2m, units: C, target_units: C}
+    sst: {native_name: sea_surface_temperature, units: C, target_units: C}
   grid:
     lat_res: 1.5
     lon_res: 1.5
     hindcast_range: null
     forecast_range: [2024, null]
-    forecast_members: 51
+    forecast_members: 101
     temporal: daily
   notes: >-
     Rhiza weather-skills dynamical-fetch (dynamical.org open catalog, credential-free):
-    ECMWF IFS-ENS extended range, 46 daily steps, 1.5 deg, 51 members -- the same
-    ensemble as rhiza/ecmwf-s2s, credential-free and without the embargo. lead_time is a
+    ECMWF IFS-ENS extended range, 46 daily steps, 1.5 deg, 101 members (control + 100) -- the same
+    ensemble as weather-skills/ecmwf-s2s, credential-free and without the embargo. lead_time is a
     timedelta of native steps; aggregate to daily downstream. One issuance per fetch; no
     reforecasts.
 
-rhiza/ifs-ens-46d-6h:
-  adapter: rhiza
+weather-skills/ifs-ens-46d-6h:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
   probe_latest: true
   variables:
     precip: {native_name: precipitation_surface, units: "mm/day", target_units: "mm/day"}
-    temp: {native_name: temperature_2m, units: C, target_units: C}
+    tmax: {native_name: maximum_temperature_2m, units: C, target_units: C}
+    tmin: {native_name: minimum_temperature_2m, units: C, target_units: C}
   grid:
     lat_res: 1.5
     lon_res: 1.5
     hindcast_range: null
     forecast_range: [2024, null]
-    forecast_members: 51
+    forecast_members: 101
     temporal: 6 hourly
   notes: >-
     Rhiza weather-skills dynamical-fetch (dynamical.org open catalog, credential-free):
-    ECMWF IFS-ENS extended range at 6-hourly steps to 46 days, 1.5 deg, 51 members.
+    ECMWF IFS-ENS extended range at 6-hourly steps to 46 days, 1.5 deg, 101 members. No mean 2 m temperature in this dataset: tmax/tmin only.
     lead_time is a timedelta of native steps; aggregate to daily downstream. One
     issuance per fetch; no reforecasts.
 
-rhiza/aifs-ens:
-  adapter: rhiza
+weather-skills/aifs-ens:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "ecmwf-aifs-ens-forecast", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2001,8 +2007,8 @@ rhiza/aifs-ens:
     lead_time is a timedelta of native steps; aggregate to daily downstream. One
     issuance per fetch; no reforecasts.
 
-rhiza/aifs-single:
-  adapter: rhiza
+weather-skills/aifs-single:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "ecmwf-aifs-single-forecast", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2021,8 +2027,8 @@ rhiza/aifs-single:
     ECMWF AIFS deterministic run; no member dimension. lead_time is a timedelta of
     native steps; aggregate to daily downstream. One issuance per fetch; no reforecasts.
 
-rhiza/gefs-35d:
-  adapter: rhiza
+weather-skills/gefs-35d:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "noaa-gefs-forecast-35-day", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2042,9 +2048,13 @@ rhiza/gefs-35d:
     NOAA GEFS 35-day, 0.25 deg, 31 members (member 0 = control). lead_time is a
     timedelta of native steps; aggregate to daily downstream. One issuance per fetch; no
     reforecasts.
+    Known upstream issue (pin 4f95364): temp can fail with 'Final chunk of Zarr array must
+    be the same size or smaller than the first' for bounding boxes that straddle the
+    source's chunk edges (seen for 2S-2N; 0-4N works) -- shift the box slightly; precip
+    is unaffected.
 
-rhiza/gfs:
-  adapter: rhiza
+weather-skills/gfs:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "noaa-gfs-forecast", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2063,8 +2073,8 @@ rhiza/gfs:
     NOAA GFS deterministic, 0.25 deg; no member dimension. lead_time is a timedelta of
     native steps; aggregate to daily downstream. One issuance per fetch; no reforecasts.
 
-rhiza/icon-eu-5d:
-  adapter: rhiza
+weather-skills/icon-eu-5d:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   argv: ["--dataset", "dwd-icon-eu-forecast-5-day", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2084,50 +2094,8 @@ rhiza/icon-eu-5d:
     catalogued for completeness. lead_time is a timedelta of native steps; aggregate to
     daily downstream. One issuance per fetch; no reforecasts.
 
-rhiza/hrdps:
-  adapter: rhiza
-  provider: weather-skills
-  skill: dynamical-fetch
-  argv: ["--dataset", "eccc-hrdps-forecast", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
-  probe_latest: true
-  variables:
-    precip: {native_name: precipitation_surface, units: "mm/day", target_units: "mm/day"}
-    temp: {native_name: temperature_2m, units: C, target_units: C}
-  grid:
-    lat_res: 0.0225
-    lon_res: 0.0225
-    hindcast_range: null
-    forecast_range: [2024, null]
-    temporal: hourly
-  notes: >-
-    Rhiza weather-skills dynamical-fetch (dynamical.org open catalog, credential-free):
-    ECCC HRDPS. CANADA ONLY: an African bbox returns an empty selection; catalogued for
-    completeness. lead_time is a timedelta of native steps; aggregate to daily
-    downstream. One issuance per fetch; no reforecasts.
-
-rhiza/hrrr-48h:
-  adapter: rhiza
-  provider: weather-skills
-  skill: dynamical-fetch
-  argv: ["--dataset", "noaa-hrrr-forecast-48-hour", "--date", "{init}", "--bbox", "{bbox}", "-v", "{variable}"]
-  probe_latest: true
-  variables:
-    precip: {native_name: precipitation_surface, units: "mm/day", target_units: "mm/day"}
-    temp: {native_name: temperature_2m, units: C, target_units: C}
-  grid:
-    lat_res: 0.03
-    lon_res: 0.03
-    hindcast_range: null
-    forecast_range: [2024, null]
-    temporal: hourly
-  notes: >-
-    Rhiza weather-skills dynamical-fetch (dynamical.org open catalog, credential-free):
-    NOAA HRRR 48-hour. CONUS ONLY: an African bbox returns an empty selection;
-    catalogued for completeness. lead_time is a timedelta of native steps; aggregate to
-    daily downstream. One issuance per fetch; no reforecasts.
-
-rhiza/subc-mme-7d:
-  adapter: rhiza
+weather-skills/subc-mme-7d:
+  adapter: weather_skills
   provider: chc-skills
   skill: subc-mme-fetch
   argv: ["--date", "{init}", "--outlook", "7d", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2151,8 +2119,8 @@ rhiza/subc-mme-7d:
     means in C. Each variable arrives with its anomaly beside it as <var>_anomaly
     (passed through unchanged). init='YYYY-MM-DD' is the archive init date.
 
-rhiza/subc-mme-15d:
-  adapter: rhiza
+weather-skills/subc-mme-15d:
+  adapter: weather_skills
   provider: chc-skills
   skill: subc-mme-fetch
   argv: ["--date", "{init}", "--outlook", "15d", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2176,8 +2144,8 @@ rhiza/subc-mme-15d:
     window means in C. Each variable arrives with its anomaly beside it as <var>_anomaly
     (passed through unchanged). init='YYYY-MM-DD' is the archive init date.
 
-rhiza/subc-mme-30d:
-  adapter: rhiza
+weather-skills/subc-mme-30d:
+  adapter: weather_skills
   provider: chc-skills
   skill: subc-mme-fetch
   argv: ["--date", "{init}", "--outlook", "30d", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2201,8 +2169,8 @@ rhiza/subc-mme-30d:
     window means in C. Each variable arrives with its anomaly beside it as <var>_anomaly
     (passed through unchanged). init='YYYY-MM-DD' is the archive init date.
 
-rhiza/gefs-analysis:
-  adapter: rhiza
+weather-skills/gefs-analysis:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   end_exclusive: true
@@ -2221,8 +2189,8 @@ rhiza/gefs-analysis:
     time series), credential-free. Call with hindcast=(y, y) and months=[...]; without
     hindcast the trailing 10 days are fetched.
 
-rhiza/gfs-analysis:
-  adapter: rhiza
+weather-skills/gfs-analysis:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   end_exclusive: true
@@ -2241,8 +2209,8 @@ rhiza/gfs-analysis:
     time series), credential-free. Call with hindcast=(y, y) and months=[...]; without
     hindcast the trailing 10 days are fetched.
 
-rhiza/imerg-early-30min:
-  adapter: rhiza
+weather-skills/imerg-early-30min:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   end_exclusive: true
@@ -2260,8 +2228,8 @@ rhiza/imerg-early-30min:
     analysis, credential-free. Call with hindcast=(y, y) and months=[...]; without
     hindcast the trailing 10 days are fetched.
 
-rhiza/imerg-late-30min:
-  adapter: rhiza
+weather-skills/imerg-late-30min:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   end_exclusive: true
@@ -2279,28 +2247,8 @@ rhiza/imerg-late-30min:
     analysis, credential-free. Call with hindcast=(y, y) and months=[...]; without
     hindcast the trailing 10 days are fetched.
 
-rhiza/hrrr-analysis:
-  adapter: rhiza
-  provider: weather-skills
-  skill: dynamical-fetch
-  end_exclusive: true
-  argv: ["--dataset", "noaa-hrrr-analysis", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
-  probe_latest: true
-  variables:
-    precip: {native_name: precipitation_surface, units: "mm/day", target_units: "mm/day"}
-    temp: {native_name: temperature_2m, units: C, target_units: C}
-  grid:
-    lat_res: 0.03
-    lon_res: 0.03
-    hindcast_range: [2014, 2026]
-    temporal: hourly
-  notes: >-
-    Rhiza weather-skills dynamical-fetch: NOAA HRRR analysis. CONUS ONLY: an African
-    bbox returns an empty selection; catalogued for completeness. Call with hindcast=(y,
-    y) and months=[...]; without hindcast the trailing 10 days are fetched.
-
-rhiza/mrms-hourly:
-  adapter: rhiza
+weather-skills/mrms-hourly:
+  adapter: weather_skills
   provider: weather-skills
   skill: dynamical-fetch
   end_exclusive: true
@@ -2319,8 +2267,8 @@ rhiza/mrms-hourly:
     with hindcast=(y, y) and months=[...]; without hindcast the trailing 10 days are
     fetched.
 
-rhiza/chirps-daily:
-  adapter: rhiza
+weather-skills/chirps-daily:
+  adapter: weather_skills
   provider: weather-skills
   skill: chirps-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}"]
@@ -2340,8 +2288,9 @@ rhiza/chirps-daily:
     region as it loads. Call with months= or a short hindcast; without hindcast the
     trailing 10 days are fetched. Native obs/chirps-v3-daily is the range-read route.
 
-rhiza/imerg-daily:
-  adapter: rhiza
+weather-skills/imerg-daily:
+  adapter: weather_skills
+  credentials: earthdata
   provider: weather-skills
   skill: imerg-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}", "--version", "late"]
@@ -2356,12 +2305,14 @@ rhiza/imerg-daily:
     temporal: daily
   notes: >-
     IMERG daily (late run, ~4-day lag) via Rhiza weather-skills imerg-fetch. Needs NASA
-    Earthdata credentials (EARTHDATA_USERNAME/PASSWORD or .netrc). No --bbox upstream:
-    fetched in 10-day chunks and cropped per chunk. rhiza/imerg-daily is the late run;
-    rhiza/imerg-daily-final the final run.
+    Earthdata Login token (~/.earthdatarc or EARTHDATA_TOKEN; username/password refused) and the
+    GES DISC application approved on the account. No --bbox upstream:
+    fetched in 10-day chunks and cropped per chunk. weather-skills/imerg-daily is the late run;
+    weather-skills/imerg-daily-final the final run.
 
-rhiza/imerg-daily-final:
-  adapter: rhiza
+weather-skills/imerg-daily-final:
+  adapter: weather_skills
+  credentials: earthdata
   provider: weather-skills
   skill: imerg-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}", "--version", "final"]
@@ -2377,11 +2328,11 @@ rhiza/imerg-daily-final:
   notes: >-
     IMERG daily (final run) via Rhiza weather-skills imerg-fetch. Needs NASA Earthdata
     credentials (EARTHDATA_USERNAME/PASSWORD or .netrc). No --bbox upstream: fetched in
-    10-day chunks and cropped per chunk. rhiza/imerg-daily is the late run; rhiza/imerg-
+    10-day chunks and cropped per chunk. weather-skills/imerg-daily is the late run; weather-skills/imerg-
     daily-final the final run.
 
-rhiza/era5:
-  adapter: rhiza
+weather-skills/era5:
+  adapter: weather_skills
   provider: weather-skills
   skill: arco-era5-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]
@@ -2400,8 +2351,8 @@ rhiza/era5:
     skills arco-era5-fetch, credential-free (obs/era5 needs CDS credentials). Hourly;
     aggregate downstream. Keep windows short (months=).
 
-rhiza/oisst-daily:
-  adapter: rhiza
+weather-skills/oisst-daily:
+  adapter: weather_skills
   provider: weather-skills
   skill: oisst-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}"]
@@ -2417,8 +2368,9 @@ rhiza/oisst-daily:
     NOAA OISST v2.1 daily SST via Rhiza weather-skills oisst-fetch (NOAA PSL OPeNDAP,
     credential-free). Degrees C, land NaN. obs/oisst-v2-highres is the monthly route.
 
-rhiza/smap-daily:
-  adapter: rhiza
+weather-skills/smap-daily:
+  adapter: weather_skills
+  credentials: earthdata
   provider: weather-skills
   skill: smap-fetch
   argv: ["--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "--overpass", "AM"]
@@ -2436,8 +2388,8 @@ rhiza/smap-daily:
     weather-skills smap-fetch. Needs Earthdata credentials. A region is required (their
     skill reads bounded granules).
 
-rhiza/cmip6:
-  adapter: rhiza
+weather-skills/cmip6:
+  adapter: weather_skills
   provider: weather-skills
   skill: cmip6-fetch
   argv: ["--model", "GFDL-CM4", "--experiment", "ssp245", "--table", "Amon", "--start-time", "{start}", "--end-time", "{end}", "--bbox", "{bbox}", "-v", "{variable}"]

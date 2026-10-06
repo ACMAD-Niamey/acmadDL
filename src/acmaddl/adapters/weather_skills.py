@@ -1,12 +1,12 @@
 """Run Rhiza weather-skills fetchers in-process and hand their Zarr to acmadDL.
 
-Design (docs/specs/2026-10-01-rhiza-weather-skills-adapter-design.md):
+Design (docs/specs/2026-10-01-weather-skills-adapter-design.md):
 
 * Their code, unmodified. Each skill is a ``@weather_skill`` script bundled as a
   data file inside the provider wheel (``skills/<skill>/scripts/<file>.py``). We
   load it by path and call the decorated wrapper with an argv list, exactly as
   the CLI would. The wrapper writes a Zarr to ``-o``; we read it back.
-* One adapter, many catalog entries. A ``rhiza/*`` product declares ``skill``,
+* One adapter, many catalog entries. A ``weather-skills/*`` product declares ``skill``,
   ``provider`` and an ``argv`` template; nothing per-skill lives here.
 * Minimal reshaping: ``init_time`` from the requested init, ``valid_time``
   derived, helper coords dropped, provenance attrs kept. ``normalize()`` does
@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -32,10 +33,10 @@ import numpy as np
 import xarray as xr
 
 from .base import AdapterBase
-from ..errors import RhizaNotInstalled, RhizaSkillError
+from ..errors import WeatherSkillsNotInstalled, WeatherSkillError
 from ..normalize import select_lon
 
-INSTALL_HINT = "uv sync --group rhiza"
+INSTALL_HINT = "uv sync --group weather-skills"
 
 # Their wrapper is called with sys.stdout/sys.stderr redirected and (for ECDS)
 # os.environ edited — both process-wide. The MCP server runs fetches on
@@ -52,16 +53,16 @@ def locate_script(provider: str, skill: str) -> Path:
     try:
         files = importlib.metadata.files(provider)
     except importlib.metadata.PackageNotFoundError as exc:
-        raise RhizaNotInstalled(provider) from exc
+        raise WeatherSkillsNotInstalled(provider) from exc
     if files is None:
-        raise RhizaNotInstalled(provider)
+        raise WeatherSkillsNotInstalled(provider)
     matches = [
         f for f in files
         if len(f.parts) == 4 and f.parts[0] == "skills" and f.parts[1] == skill
         and f.parts[2] == "scripts" and f.suffix == ".py"
     ]
     if len(matches) != 1:
-        raise RhizaSkillError(
+        raise WeatherSkillError(
             f"{provider!r} ships {len(matches)} scripts for skill {skill!r}; "
             "expected exactly one under skills/<skill>/scripts/"
         )
@@ -74,13 +75,13 @@ def load_entrypoint(provider: str, skill: str, entrypoint: str = "fetch"):
     if key in _ENTRYPOINTS:
         return _ENTRYPOINTS[key]
     path = locate_script(provider, skill)
-    name = "acmaddl_rhiza_" + skill.replace("-", "_")
+    name = "acmaddl_weather_skills_" + skill.replace("-", "_")
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     fn = getattr(module, entrypoint, None)
     if fn is None or not hasattr(fn, "parser"):
-        raise RhizaSkillError(
+        raise WeatherSkillError(
             f"{skill}: {entrypoint!r} in {path} is not a @weather_skill entrypoint"
         )
     version = str(getattr(module, "_SKILL_VERSION", "unknown"))
@@ -157,7 +158,7 @@ def run_skill(fn, argv, out_path, *, env=None, verbose=False, skill=""):
     """Call a ``@weather_skill`` wrapper as the CLI would, writing to ``out_path``.
 
     Their decorator prints the reason for a refusal to stderr and exits
-    non-zero; that text becomes the ``RhizaSkillError`` message. Exit 0 with
+    non-zero; that text becomes the ``WeatherSkillError`` message. Exit 0 with
     nothing written (the skill returned ``None``) is also an error here.
     """
     out_path = Path(out_path)
@@ -170,11 +171,13 @@ def run_skill(fn, argv, out_path, *, env=None, verbose=False, skill=""):
             code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
             if code != 0:
                 text = err.getvalue().strip() or f"exit status {code}"
-                raise RhizaSkillError(f"{skill or 'skill'} {' '.join(argv)}: {text}") from None
-    if verbose and err.getvalue().strip():
-        print(f"[acmaddl:rhiza] {skill}: {err.getvalue().strip()}")
+                raise WeatherSkillError(f"{skill or 'skill'} {' '.join(argv)}: {text}") from None
+    if verbose:
+        for line in err.getvalue().strip().splitlines():
+            if line.strip():
+                print(f"[acmaddl:weather-skills] {skill}: {line.strip()}")
     if not out_path.exists():
-        raise RhizaSkillError(f"{skill or 'skill'} exited 0 but wrote no output at {out_path}")
+        raise WeatherSkillError(f"{skill or 'skill'} exited 0 but wrote no output at {out_path}")
     return out_path
 
 
@@ -207,9 +210,9 @@ def _netcdf_safe_attrs(ds):
 def stamp(ds, *, skill, version, provider):
     """Record which skill produced this dataset next to their own provenance."""
     ds = _netcdf_safe_attrs(ds.copy())
-    ds.attrs["rhiza_skill"] = skill
-    ds.attrs["rhiza_skill_version"] = version
-    ds.attrs["rhiza_pin"] = provider_pin(provider)
+    ds.attrs["weather_skills_name"] = skill
+    ds.attrs["weather_skills_version"] = version
+    ds.attrs["weather_skills_pin"] = provider_pin(provider)
     return ds
 
 
@@ -306,6 +309,44 @@ def crop_region(ds, region):
     return select_lon(ds, lon_w, lon_e, lon_name=lon_name)
 
 
+def earthdata_environment(home=None):
+    """Refuse an Earthdata-backed skill before it can block on a login prompt.
+
+    imerg-fetch calls ``earthaccess.login()`` with its default strategy, which
+    falls through to an *interactive* prompt when it finds no credentials --
+    inside acmaddl that is a hang, not an error. Policy: an Earthdata Login
+    **token** only. ``EARTHDATA_TOKEN`` in the environment is used as is (their
+    library reads it); otherwise ``~/.earthdatarc``, a file holding the bare
+    token, is mapped onto that variable for the call. Username/password pairs
+    (``EARTHDATA_USERNAME``/``EARTHDATA_PASSWORD``, ``~/.netrc``) are refused
+    on purpose: a revocable, short-lived token is the safer thing to keep.
+    """
+    home = Path(home) if home is not None else Path.home()
+    if os.environ.get("EARTHDATA_TOKEN"):
+        return {}
+    rc_path = home / ".earthdatarc"
+    if rc_path.exists():
+        lines = [ln.strip() for ln in rc_path.read_text().splitlines() if ln.strip()]
+        if len(lines) == 1:
+            token = re.sub(r"^token\s*:\s*", "", lines[0])
+            if token and ":" not in token and " " not in token:
+                return {"EARTHDATA_TOKEN": token}
+        raise WeatherSkillError(
+            f"{rc_path} must hold exactly one line: the Earthdata Login token itself "
+            "(profile -> Generate Token at urs.earthdata.nasa.gov). Username/password "
+            "entries are not accepted; acmaddl requires a token."
+        )
+    raise WeatherSkillError(
+        "this product needs an Earthdata Login token: put the token in ~/.earthdatarc "
+        "(one line, nothing else) or set EARTHDATA_TOKEN. Username/password and ~/.netrc "
+        "are deliberately not accepted. (Without a token the skill would wait on an "
+        "interactive login prompt.)"
+    )
+
+
+_ECDS_URL = "https://ecds.ecmwf.int/api"
+
+
 def _read_rc(path):
     """``key: value`` lines of a cdsapirc-style file -> dict (missing file -> {})."""
     out = {}
@@ -321,29 +362,54 @@ def ecds_environment(home=None):
     """Environment to give ecmwf-fetch so it finds ECMWF Data Store credentials.
 
     Their script requires ``ECMWF_DATASTORES_URL`` and ``ECMWF_DATASTORES_KEY``
-    (or ``~/.ecmwfdatastoresrc``, which their client reads itself). acmadDL
-    users usually hold the same token in ``~/.cdsapirc`` or ``CDSAPI_URL`` /
-    ``CDSAPI_KEY`` for ``c3s/ecmwf-s2s``; map those across only when they point
-    at the ECDS. A Copernicus CDS token is a different credential, so that
+    in the environment (it checks before the client would read its own
+    ``~/.ecmwfdatastoresrc``). So both that file and an ECDS-pointing
+    ``~/.cdsapirc`` / ``CDSAPI_URL`` / ``CDSAPI_KEY`` (what acmadDL users hold
+    for ``c3s/ecmwf-s2s``) are mapped into the variables for the call. A Copernicus CDS token is a different credential, so that
     case is refused with instructions rather than sent and rejected upstream.
     """
     home = Path(home) if home is not None else Path.home()
     if os.environ.get("ECMWF_DATASTORES_URL") and os.environ.get("ECMWF_DATASTORES_KEY"):
         return {}
-    if (home / ".ecmwfdatastoresrc").exists():
-        return {}
+    # The client's own file (`url:` / `key:` lines). Their script checks the two
+    # variables before the client would read it, so the file is mapped into them.
+    rc_path = home / ".ecmwfdatastoresrc"
+    if rc_path.exists():
+        lines = [ln.strip() for ln in rc_path.read_text().splitlines() if ln.strip()]
+        if len(lines) == 1 and ":" not in lines[0] and " " not in lines[0]:
+            # acmadDL convenience, like ~/.earthdatarc: the bare key alone.
+            return {"ECMWF_DATASTORES_URL": _ECDS_URL, "ECMWF_DATASTORES_KEY": lines[0]}
+        rc = _read_rc(rc_path)
+        if rc.get("key"):
+            return {"ECMWF_DATASTORES_URL": rc.get("url") or _ECDS_URL, "ECMWF_DATASTORES_KEY": rc["key"]}
+        raise WeatherSkillError(
+            f"{rc_path} must hold either the bare ECDS key on one line, or 'url:' and 'key:' lines."
+        )
     url, key = os.environ.get("CDSAPI_URL"), os.environ.get("CDSAPI_KEY")
     if not (url and key):
         rc = _read_rc(home / ".cdsapirc")
         url, key = url or rc.get("url"), key or rc.get("key")
     if url and key and "ecds.ecmwf.int" in url:
         return {"ECMWF_DATASTORES_URL": url, "ECMWF_DATASTORES_KEY": key}
-    raise RhizaSkillError(
-        "rhiza/ecmwf-s2s needs ECMWF Data Store credentials: set ECMWF_DATASTORES_URL="
+    raise WeatherSkillError(
+        "weather-skills/ecmwf-s2s needs ECMWF Data Store credentials: set ECMWF_DATASTORES_URL="
         "https://ecds.ecmwf.int/api and ECMWF_DATASTORES_KEY (or create ~/.ecmwfdatastoresrc), "
         "or point ~/.cdsapirc at https://ecds.ecmwf.int/api. A Copernicus CDS "
         "(cds.climate.copernicus.eu) key is a different token and will not work."
     )
+
+
+def _credential_env(cfg):
+    """Environment to run a skill (and its probe) with, per the entry's ``credentials`` knob."""
+    creds = cfg.get("credentials")
+    if not creds:
+        return {}
+    if creds == "ecds":
+        return ecds_environment()
+    if creds == "earthdata":
+        return earthdata_environment()
+    raise ValueError(
+        f"{cfg.get('skill', '?')}: unknown credentials kind {creds!r} (expected 'ecds' or 'earthdata')")
 
 
 def _today():
@@ -351,8 +417,8 @@ def _today():
     return date.today()
 
 
-class RhizaAdapter(AdapterBase):
-    """Catalog entries: ``adapter: rhiza``; see module docstring and catalog.yaml header."""
+class WeatherSkillsAdapter(AdapterBase):
+    """Catalog entries: ``adapter: weather_skills``; see module docstring and catalog.yaml header."""
 
     def fetch_data(self, product_config, variable, date_range=None, region=None):
         cfg = product_config
@@ -365,16 +431,16 @@ class RhizaAdapter(AdapterBase):
         requires_region = bool(cfg.get("requires_region"))
         if cfg.get("_reforecast"):
             raise ValueError(
-                f"{skill}: reforecasts are not available through rhiza/* products (no reforecast "
+                f"{skill}: reforecasts are not available through weather-skills/* products (no reforecast "
                 "stream). For ECMWF S2S hindcasts use c3s/ecmwf-s2s with reforecast=True."
             )
         if "forecast_type" in cfg:
             raise ValueError(
-                f"{skill}: forecast_type is not supported on rhiza/* products; member 0 is the "
+                f"{skill}: forecast_type is not supported on weather-skills/* products; member 0 is the "
                 "control run and is always included."
             )
         fn, version = load_entrypoint(provider, skill, entrypoint)
-        env = ecds_environment() if cfg.get("credentials") == "ecds" else {}
+        env = _credential_env(cfg)
         fields = {"variable": native, "bbox": bbox_nwse(region) if region else None}
 
         is_forecast = any("{init}" in t for t in template)
@@ -382,28 +448,28 @@ class RhizaAdapter(AdapterBase):
         if not (is_forecast or is_obs):
             raise ValueError(
                 f"{skill}: argv template has neither {{init}} nor {{start}}/{{end}}; "
-                "a rhiza/* entry must be a forecast (init-keyed) or an observation (date-window) product"
+                "a weather-skills/* entry must be a forecast (init-keyed) or an observation (date-window) product"
             )
 
-        with tempfile.TemporaryDirectory(prefix="acmaddl-rhiza-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="acmaddl-weather-skills-") as tmp:
             tmp = Path(tmp)
             if is_forecast:
                 init = cfg.get("_init_date")
                 if not init:
                     raise ValueError(
                         f"{skill} is issuance-keyed: pass init='YYYY-MM-DD' (a full date; a month "
-                        "alone selects nothing). Reforecasts are not available through rhiza/* products."
+                        "alone selects nothing). Reforecasts are not available through weather-skills/* products."
                     )
                 argv = render_argv(template, {**fields, "init": init}, requires_region=requires_region, skill=skill)
                 if verbose:
-                    print(f"[acmaddl:rhiza] {skill} {' '.join(argv)}")
+                    print(f"[acmaddl:weather-skills] {skill} {' '.join(argv)}")
                 out = run_skill(fn, argv, tmp / "out.zarr", env=env, verbose=verbose, skill=skill)
                 ds = reshape_forecast(open_output(out), date.fromisoformat(init))
                 shutil.rmtree(out, ignore_errors=True)
             else:
                 latest = None
                 if cfg.get("probe_latest") and not cfg.get("allow_future"):
-                    text = self._probe_latest(fn, cfg)
+                    text = self._probe_latest(fn, cfg, env=env)
                     try:
                         latest = date.fromisoformat(text)
                     except ValueError:
@@ -419,7 +485,7 @@ class RhizaAdapter(AdapterBase):
                     argv = render_argv(template, {**fields, "start": start.isoformat(), "end": asked_end.isoformat()},
                                        requires_region=requires_region, skill=skill)
                     if verbose:
-                        print(f"[acmaddl:rhiza] {skill} {' '.join(argv)} ({k + 1}/{len(windows)})")
+                        print(f"[acmaddl:weather-skills] {skill} {' '.join(argv)} ({k + 1}/{len(windows)})")
                     out = run_skill(fn, argv, tmp / f"out{k}.zarr", env=env, verbose=verbose, skill=skill)
                     part = open_output(out)
                     shutil.rmtree(out, ignore_errors=True)   # each global chunk leaves disk as soon as it is in memory
@@ -453,7 +519,7 @@ class RhizaAdapter(AdapterBase):
         base = {"probe_remote": bool(probe_remote)}
         try:
             fn, version = load_entrypoint(provider, skill, cfg.get("entrypoint", "fetch"))
-        except (RhizaNotInstalled, RhizaSkillError) as exc:
+        except (WeatherSkillsNotInstalled, WeatherSkillError) as exc:
             return {**base, "healthy": False, "kind": "config", "message": str(exc)}
         err = io.StringIO()
         with _SKILL_LOCK, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
@@ -469,24 +535,32 @@ class RhizaAdapter(AdapterBase):
         if not probe_remote or not probe:
             return ok
         try:
-            latest = self._probe_latest(fn, cfg)
-        except RhizaSkillError as exc:
+            env = _credential_env(cfg)
+        except WeatherSkillError as exc:          # no token / no ECDS key: a config problem, not a remote one
+            return {**base, "healthy": False, "kind": "config", "message": str(exc)}
+        try:
+            latest = self._probe_latest(fn, cfg, env=env)
+        except WeatherSkillError as exc:
             return {**base, "healthy": False, "kind": "remote", "message": str(exc)}
         return {**base, "healthy": True, "kind": "remote", "latest": latest,
                 "message": f"{skill} v{version}: latest available {latest}."}
 
-    def _probe_latest(self, fn, cfg):
-        """Run the skill's own ``--probe-latest``; the last stdout line (a date, or 'none')."""
+    def _probe_latest(self, fn, cfg, env=None):
+        """Run the skill's own ``--probe-latest``; the last stdout line (a date, or 'none').
+
+        ``env`` is the credential mapping the fetch itself runs with: some probes
+        (imerg-fetch, smap-fetch) authenticate too.
+        """
         probe = cfg.get("probe_latest")
         argv = self._static_argv(cfg.get("argv", [])) + (
             list(probe) if isinstance(probe, (list, tuple)) else ["--probe-latest"])
         out, err = io.StringIO(), io.StringIO()
-        with _SKILL_LOCK, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with _SKILL_LOCK, _environ(env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 fn(argv)
             except SystemExit as exc:
                 if exc.code not in (0, None):
-                    raise RhizaSkillError(
+                    raise WeatherSkillError(
                         f"{cfg.get('skill', '?')} {' '.join(argv)}: {err.getvalue().strip() or exc.code}"
                     ) from None
         lines = [ln.strip() for ln in out.getvalue().splitlines() if ln.strip()]

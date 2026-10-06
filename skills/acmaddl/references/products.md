@@ -146,58 +146,55 @@ These carry an `issuance` catalog block: they are keyed by an issuance date, not
 
 Both share the CHC CrowdSec constraint (`request_interval: 3.0`, 4-hour IP ban above ~2 req/s). The 2001-2019 window is the GEFSv12 reforecast era.
 
-## Rhiza weather-skills (`rhiza/*`, `rhiza` adapter) — `uv sync --group rhiza`
+## Weather skills (`weather-skills/*`, `weather-skills` adapter) — `uv sync --group weather-skills`
 
-The `rhiza/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetcher scripts **unmodified, in-process**, and reshape only their output. Install the dependency group first (`uv sync --group rhiza`; see [Installation](#installation)). What they share:
+The `weather-skills/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetcher scripts **unmodified, in-process**, and reshape only their output. Install the dependency group first (`uv sync --group weather-skills`; see [Installation](#installation)). What they share:
 
 - **Forecasts are one issuance per fetch**: `init="YYYY-MM-DD"`. There is no reforecast stream, so they cannot feed `assemble()` hindcast tuples; for ECMWF S2S reforecasts keep using `c3s/ecmwf-s2s` with `reforecast=True`.
 - **Member 0 is the control run** and is kept; `forecast_members` counts it.
 - **`lead_time` is a `timedelta64` of native steps** (daily for ECMWF S2S, 3-6 hourly for IFS-ENS and GEFS, one step for a SubC outlook); `time` is the derived valid time. Aggregate downstream.
-- **Observation windows** come from `hindcast=(y, y)` plus `months=[...]`, clipped to the skill's own published latest day; without `hindcast` you get the trailing 10 days. `rhiza/chirps-daily` and `rhiza/imerg-daily*` load the full global grid per day upstream, so acmadDL fetches them in 10-day chunks and crops each chunk as it loads — keep those windows short.
-- **Provenance** travels with the data: their `weather_skills_history` and `weather_skills_source` attributes stay on the output (so their `provenance` skill reads our files), plus `rhiza_skill`, `rhiza_skill_version` and `rhiza_pin` (the provider commit).
-- `rhiza/ifs-ens-46d` is the same ECMWF extended-range ensemble as `rhiza/ecmwf-s2s`, served credential-free and without the 2-day embargo from the dynamical.org open catalog.
-- The ICON-EU, HRDPS, HRRR and MRMS entries are regional (Europe, Canada, CONUS); an African bounding box returns an empty selection. They are catalogued for completeness.
+- **Observation windows** come from `hindcast=(y, y)` plus `months=[...]`, clipped to the skill's own published latest day; without `hindcast` you get the trailing 10 days. `weather-skills/chirps-daily` and `weather-skills/imerg-daily*` load the full global grid per day upstream, so acmadDL fetches them in 10-day chunks and crops each chunk as it loads — keep those windows short.
+- **Provenance** travels with the data: their `weather_skills_history` and `weather_skills_source` attributes stay on the output (so their `provenance` skill reads our files), plus `weather_skills_name`, `weather_skills_version` and `weather_skills_pin` (the provider commit).
+- `weather-skills/ifs-ens-46d` is the same ECMWF extended-range ensemble as `weather-skills/ecmwf-s2s`, served credential-free and without the 2-day embargo from the dynamical.org open catalog.
+- The ICON-EU and MRMS entries are regional (Europe, CONUS); an African bounding box returns an empty selection. They are catalogued for completeness. dynamical.org's HRDPS and HRRR datasets sit on projected grids, which their fetcher refuses, so they are not catalogued.
 
-Entry knobs (`adapter: rhiza`): `provider` (distribution, default `weather-skills`; `chc-skills` for SubC), `skill` (the `skills/<skill>/scripts/*.py` to run), `entrypoint` (default `fetch`), `argv` (CLI template with `{init}` `{bbox}` `{start}` `{end}` `{variable}`; `{init}` marks a forecast, `{start}`/`{end}` an observation window), `requires_region`, `window_days` (chunk + crop for global observation fetchers), `credentials: ecds`, `probe_latest` (`true` or a token list; also clips observation windows), `allow_future` (CMIP6), `end_exclusive` (dynamical-fetch analyses slice their time axis to `--end-time 00:00`; acmaddl asks for end+1 and trims back so the last day keeps its sub-daily steps). The provider packages are pinned to commits in `pyproject.toml` `[tool.uv.sources]`; moving a pin re-captures `tests/fixtures/rhiza` (`scripts/capture_rhiza_fixtures.py`) and bumps `fetch._CACHE_VERSION`.
+Entry knobs (`adapter: weather_skills`): `provider` (distribution, default `weather-skills`; `chc-skills` for SubC), `skill` (the `skills/<skill>/scripts/*.py` to run), `entrypoint` (default `fetch`), `argv` (CLI template with `{init}` `{bbox}` `{start}` `{end}` `{variable}`; `{init}` marks a forecast, `{start}`/`{end}` an observation window), `requires_region`, `window_days` (chunk + crop for global observation fetchers), `credentials: ecds`, `probe_latest` (`true` or a token list; also clips observation windows), `allow_future` (CMIP6), `end_exclusive` (dynamical-fetch analyses slice their time axis to `--end-time 00:00`; acmaddl asks for end+1 and trims back so the last day keeps its sub-daily steps). The provider packages are pinned to commits in `pyproject.toml` `[tool.uv.sources]`; moving a pin re-captures `tests/fixtures/weather_skills` (`scripts/capture_weather_skills_fixtures.py`) and bumps `fetch._CACHE_VERSION`.
 
 **Forecasts**
 
 | Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
 |---|---|---|---|---|---|
-| `rhiza/ecmwf-s2s` | ecmwf-fetch | precip, temp, sst, d2m, mx2t6, mn2t6, u10, v10, msl, cape, tcw | daily | 101 | ECDS |
-| `rhiza/ifs-ens-15d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) | precip, temp | 3-6 hourly | 51 | none |
-| `rhiza/ifs-ens-46d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) | precip, temp | daily | 51 | none |
-| `rhiza/ifs-ens-46d-6h` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree`) | precip, temp | 6 hourly | 51 | none |
-| `rhiza/aifs-ens` | dynamical-fetch (`ecmwf-aifs-ens-forecast`) | precip, temp | 6 hourly | 51 | none |
-| `rhiza/aifs-single` | dynamical-fetch (`ecmwf-aifs-single-forecast`) | precip, temp | 6 hourly | - | none |
-| `rhiza/gefs-35d` | dynamical-fetch (`noaa-gefs-forecast-35-day`) | precip, temp | 3-6 hourly | 31 | none |
-| `rhiza/gfs` | dynamical-fetch (`noaa-gfs-forecast`) | precip, temp | 3 hourly | - | none |
-| `rhiza/icon-eu-5d` | dynamical-fetch (`dwd-icon-eu-forecast-5-day`) | precip, temp | hourly | - | none |
-| `rhiza/hrdps` | dynamical-fetch (`eccc-hrdps-forecast`) | precip, temp | hourly | - | none |
-| `rhiza/hrrr-48h` | dynamical-fetch (`noaa-hrrr-forecast-48-hour`) | precip, temp | hourly | - | none |
-| `rhiza/subc-mme-7d` | subc-mme-fetch (`7d`) | precip, temp, sst, tasmax, tasmin, tdps | 7-day outlook | - | none |
-| `rhiza/subc-mme-15d` | subc-mme-fetch (`15d`) | precip, temp, sst, tasmax, tasmin, tdps | 15-day outlook | - | none |
-| `rhiza/subc-mme-30d` | subc-mme-fetch (`30d`) | precip, temp, sst, tasmax, tasmin, tdps | 30-day outlook | - | none |
+| `weather-skills/ecmwf-s2s` | ecmwf-fetch | precip, temp, sst, d2m, mx2t6, mn2t6, u10, v10, msl, cape, tcw | daily | 101 | ECDS |
+| `weather-skills/ifs-ens-15d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) | precip, temp | 3-6 hourly | 51 | none |
+| `weather-skills/ifs-ens-46d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) | precip, temp, tmax, tmin, sst | daily | 101 | none |
+| `weather-skills/ifs-ens-46d-6h` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree`) | precip, tmax, tmin | 6 hourly | 101 | none |
+| `weather-skills/aifs-ens` | dynamical-fetch (`ecmwf-aifs-ens-forecast`) | precip, temp | 6 hourly | 51 | none |
+| `weather-skills/aifs-single` | dynamical-fetch (`ecmwf-aifs-single-forecast`) | precip, temp | 6 hourly | - | none |
+| `weather-skills/gefs-35d` | dynamical-fetch (`noaa-gefs-forecast-35-day`) | precip, temp | 3-6 hourly | 31 | none |
+| `weather-skills/gfs` | dynamical-fetch (`noaa-gfs-forecast`) | precip, temp | 3 hourly | - | none |
+| `weather-skills/icon-eu-5d` | dynamical-fetch (`dwd-icon-eu-forecast-5-day`) | precip, temp | hourly | - | none |
+| `weather-skills/subc-mme-7d` | subc-mme-fetch (`7d`) | precip, temp, sst, tasmax, tasmin, tdps | 7-day outlook | - | none |
+| `weather-skills/subc-mme-15d` | subc-mme-fetch (`15d`) | precip, temp, sst, tasmax, tasmin, tdps | 15-day outlook | - | none |
+| `weather-skills/subc-mme-30d` | subc-mme-fetch (`30d`) | precip, temp, sst, tasmax, tasmin, tdps | 30-day outlook | - | none |
 
 **Observations and analyses**
 
 | Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
 |---|---|---|---|---|---|
-| `rhiza/gefs-analysis` | dynamical-fetch (`noaa-gefs-analysis`) | precip, temp | 3 hourly | - | none |
-| `rhiza/gfs-analysis` | dynamical-fetch (`noaa-gfs-analysis`) | precip, temp | hourly | - | none |
-| `rhiza/imerg-early-30min` | dynamical-fetch (`nasa-imerg-analysis-early`) | precip | half-hourly | - | none |
-| `rhiza/imerg-late-30min` | dynamical-fetch (`nasa-imerg-analysis-late`) | precip | half-hourly | - | none |
-| `rhiza/hrrr-analysis` | dynamical-fetch (`noaa-hrrr-analysis`) | precip, temp | hourly | - | none |
-| `rhiza/mrms-hourly` | dynamical-fetch (`noaa-mrms-conus-analysis-hourly`) | precip | hourly | - | none |
-| `rhiza/chirps-daily` | chirps-fetch | precip | daily | - | none |
-| `rhiza/imerg-daily` | imerg-fetch (`late`) | precip | daily | - | Earthdata |
-| `rhiza/imerg-daily-final` | imerg-fetch (`final`) | precip | daily | - | Earthdata |
-| `rhiza/era5` | arco-era5-fetch | precip, temp, sst | hourly | - | none |
-| `rhiza/oisst-daily` | oisst-fetch | sst | daily | - | none |
-| `rhiza/smap-daily` | smap-fetch | soil_moisture | daily | - | Earthdata |
-| `rhiza/cmip6` | cmip6-fetch (`ssp245`) | precip, temp | monthly | - | none |
+| `weather-skills/gefs-analysis` | dynamical-fetch (`noaa-gefs-analysis`) | precip, temp | 3 hourly | - | none |
+| `weather-skills/gfs-analysis` | dynamical-fetch (`noaa-gfs-analysis`) | precip, temp | hourly | - | none |
+| `weather-skills/imerg-early-30min` | dynamical-fetch (`nasa-imerg-analysis-early`) | precip | half-hourly | - | none |
+| `weather-skills/imerg-late-30min` | dynamical-fetch (`nasa-imerg-analysis-late`) | precip | half-hourly | - | none |
+| `weather-skills/mrms-hourly` | dynamical-fetch (`noaa-mrms-conus-analysis-hourly`) | precip | hourly | - | none |
+| `weather-skills/chirps-daily` | chirps-fetch | precip | daily | - | none |
+| `weather-skills/imerg-daily` | imerg-fetch (`late`) | precip | daily | - | Earthdata |
+| `weather-skills/imerg-daily-final` | imerg-fetch (`final`) | precip | daily | - | Earthdata |
+| `weather-skills/era5` | arco-era5-fetch | precip, temp, sst | hourly | - | none |
+| `weather-skills/oisst-daily` | oisst-fetch | sst | daily | - | none |
+| `weather-skills/smap-daily` | smap-fetch | soil_moisture | daily | - | Earthdata |
+| `weather-skills/cmip6` | cmip6-fetch (`ssp245`) | precip, temp | monthly | - | none |
 
-`rhiza/cmip6` pins one model/scenario (`GFDL-CM4`, `ssp245`, `Amon`); other combinations are a copied catalog block with different `argv`. Request at least two months (their skill needs two time points to stamp an interval). Not catalogued (round two): station-shaped skills (GHCN, TAHMO, OpenAQ — `(time, station_id)` is a new shape for acmaddl), ecmwf-fetch pressure-level fields (`vertical` dim), kenya-forecast-fetch, and the CHC image fetchers.
+`weather-skills/cmip6` pins one model/scenario (`GFDL-CM4`, `ssp245`, `Amon`); other combinations are a copied catalog block with different `argv`. Request at least two months (their skill needs two time points to stamp an interval). Not catalogued (round two): station-shaped skills (GHCN, TAHMO, OpenAQ — `(time, station_id)` is a new shape for acmaddl), ecmwf-fetch pressure-level fields (`vertical` dim), kenya-forecast-fetch, and the CHC image fetchers.
 
 ## Catalog entry anatomy
 

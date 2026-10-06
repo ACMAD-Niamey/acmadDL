@@ -77,18 +77,18 @@ override-dependencies = ["zarr>=3.1.0", "xarray>=2026.7"]
 [tool.uv.sources]
 # Rhiza weather-skills provider packages, pinned to commits (their `main` is a
 # release branch that auto-bumps skill versions). Moving a pin: re-capture
-# tests/fixtures/rhiza via scripts/capture_rhiza_fixtures.py and bump
+# tests/fixtures/weather_skills via scripts/capture_weather_skills_fixtures.py and bump
 # fetch._CACHE_VERSION (the raw-fetch cache key cannot see the pin).
 weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", rev = "e118b9531181224cb1459efbd9f2b114117f0a79" }
 weather-skills = { git = "https://github.com/rhiza-research/weather-skills", rev = "4f95364b323e601f5cbd43ee3af39d2d77617596" }
 chc-skills = { git = "https://github.com/rhiza-research/chc-skills", rev = "20bce784a77a10a1fe7a368e29669a5d673eb176" }
 
 [dependency-groups]
-# `uv sync --group rhiza`: the adapters/rhiza.py adapter runs Rhiza's fetcher
+# `uv sync --group weather-skills`: the adapters/weather_skills.py adapter runs Rhiza's fetcher
 # scripts in-process. A dependency GROUP rather than an extra because PyPI
 # rejects published metadata that points at git URLs. Besides the three
 # provider packages this lists what their scripts declare in PEP 723 headers.
-rhiza = [
+weather-skills = [
     "weather-skills-core",
     "weather-skills",
     "chc-skills",

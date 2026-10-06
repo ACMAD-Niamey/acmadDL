@@ -52,7 +52,7 @@
 
 ## Canonical output schema
 
-- Coordinates: `lat`, `lon` (ascending lat, lon in [-180, 180]); `time` (obs, `datetime64`); `init_time` (forecasts, `datetime64`); `lead_time` (numeric for seasonal products; a `timedelta64` for issuance-keyed and `rhiza/*` forecasts); `member` (integer ensemble index). With `year_index=True`: integer `year` replaces `init_time`.
+- Coordinates: `lat`, `lon` (ascending lat, lon in [-180, 180]); `time` (obs, `datetime64`); `init_time` (forecasts, `datetime64`); `lead_time` (numeric for seasonal products; a `timedelta64` for issuance-keyed and `weather-skills/*` forecasts); `member` (integer ensemble index). With `year_index=True`: integer `year` replaces `init_time`.
 - Typical dims — forecasts: `(init_time, lead_time, member, lat, lon)`; observations: `(time, lat, lon)`; `assemble()` output: `(year, member, lat, lon)`.
 - Units: collapsed targeted seasonal forecasts (`year_index=True`/`assemble`) use precip `mm` across adapter families. Lead-resolved and daily precipitation generally remains `mm/day`; native CHIRPS pentad/dekad/annual products keep `mm` totals, and every monthly observational precip product — `obs/chirps-v2-monthly`, `obs/chirps-v3-monthly`, `obs/chirps-v3-monthly-prelim`, `obs/tamsat`, `obs/gpcc-*` — keeps `mm/month`. Temp is `C`; sst is mostly `K` (ERA5 sst is `C`); `pev` is `mm/day`.
 
@@ -81,9 +81,9 @@ Output layout:
 
 A season `target` cannot combine with an issuance sequence (target selects leads relative to one init); fetch the leads and select the target window afterwards. A sequence passed to a non-issuance product raises `ValueError`.
 
-## Rhiza weather-skills products (`rhiza/*`)
+## Rhiza weather-skills products (`weather-skills/*`)
 
-The `rhiza` adapter runs a Rhiza weather-skills fetcher script in-process and reads the Zarr it writes. Their raw shapes and what acmaddl makes of them:
+The `weather-skills` adapter runs a Rhiza weather-skills fetcher script in-process and reads the Zarr it writes. Their raw shapes and what acmaddl makes of them:
 
 | Their output | acmaddl output |
 |---|---|
@@ -94,7 +94,7 @@ The `rhiza` adapter runs a Rhiza weather-skills fetcher script in-process and re
 - Member 0 is the control run and is kept; `grid.forecast_members` counts it.
 - Native steps are preserved (3-6 hourly for IFS-ENS/GEFS/AIFS, hourly for GFS/analyses, daily for ECMWF S2S and IFS-ENS 46 d, half-hourly for IMERG). Aggregate downstream.
 - Units are declared per variable in the catalog and converted by the usual `(units, target_units)` table: their precipitation rates are `mm/day`, temperatures and SST `C`; SubC precipitation is a window **sum** in `mm`, with each `<var>_anomaly` field passed through unchanged.
-- Attributes kept: `weather_skills_history` (JSON), `weather_skills_source`; added: `rhiza_skill`, `rhiza_skill_version`, `rhiza_pin`. Dict-valued attributes some sources stamp on coordinates are JSON-encoded so the result writes to NetCDF.
+- Attributes kept: `weather_skills_history` (JSON), `weather_skills_source`; added: `weather_skills_name`, `weather_skills_version`, `weather_skills_pin`. Dict-valued attributes some sources stamp on coordinates are JSON-encoded so the result writes to NetCDF.
 - Observation windows: `hindcast=(y0, y1)` × `months=` collapse into contiguous month runs, clipped to the skill's own `--probe-latest` day (or yesterday), chunked by `window_days` for the global fetchers (each chunk cropped to the bbox before concatenation); no `hindcast` = trailing `window_days` (default 10) days. `allow_future` (CMIP6) disables the clip.
 - `year_index=True` is not blocked but, with a single real-time issuance and no hindcast, collapses to a one-year axis and means nothing.
 

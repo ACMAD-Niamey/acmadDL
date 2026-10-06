@@ -26,6 +26,8 @@ tmp/
 # generated demo PNGs + regenerated catalog HTML/text
 output/
 *.nc
+# weather-skills adapter test fixtures: tiny captured skill outputs, deliberately tracked.
+!tests/fixtures/weather_skills/*.nc
 *.zarr/
 *.grib
 *.grb

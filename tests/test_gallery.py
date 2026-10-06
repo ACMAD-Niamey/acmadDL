@@ -40,8 +40,8 @@ def test_collect_covers_every_live_product():
     assert _classify("obs/era5", {"variables": {"temp": {}, "precip": {}, "sst": {}}}) == (
         "Observations", "Reanalysis (multi-variable)")
     assert _classify("c3s/ecmwf") == ("Seasonal forecasts", "C3S / Copernicus")
-    assert _classify("rhiza/ifs-ens-15d", {"argv": ["--date", "{init}"]}) == ("Sub-seasonal forecasts", "Rhiza weather-skills")
-    assert _classify("rhiza/chirps-daily", {"argv": ["--start-time", "{start}"]}) == ("Observations", "Rhiza weather-skills")
+    assert _classify("weather-skills/ifs-ens-15d", {"argv": ["--date", "{init}"]}) == ("Sub-seasonal forecasts", "weather-skills")
+    assert _classify("weather-skills/chirps-daily", {"argv": ["--start-time", "{start}"]}) == ("Observations", "weather-skills")
 
 
 def test_meta_line_and_source():

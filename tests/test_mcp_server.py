@@ -81,7 +81,7 @@ def test_tool_schemas_have_descriptions():
 
 
 def test_list_products_includes_rhiza_family():
-    assert any("rhiza/" in str(p) for p in server.list_products())
+    assert any("weather-skills/" in str(p) for p in server.list_products())
 
 
 def test_list_products_is_json_safe():

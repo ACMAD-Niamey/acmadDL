@@ -1,13 +1,15 @@
 """Capture small real outputs of the Rhiza skills as test fixtures.
 
-    uv run python scripts/capture_rhiza_fixtures.py            # credential-free skills
-    uv run python scripts/capture_rhiza_fixtures.py --real     # also ECDS / Earthdata skills
+    uv run python scripts/capture_weather_skills_fixtures.py            # credential-free skills
+    uv run python scripts/capture_weather_skills_fixtures.py --real     # also ECDS / Earthdata skills, whichever credentials exist
 
 Each fixture is the skill's raw Zarr output, subset to a few members / steps /
-cells and saved as NetCDF under tests/fixtures/rhiza/. Re-run after moving a
-provider pin in pyproject.toml. Without --real, the three credentialed shapes
-(ecmwf-fetch, imerg-fetch, smap-fetch) are synthesised from their documented
-schemas so the unit suite is complete offline.
+cells and saved as NetCDF under tests/fixtures/weather_skills/. Re-run after moving a
+provider pin in pyproject.toml. The three credentialed shapes (ecmwf-fetch,
+imerg-fetch, smap-fetch) are captured for real only with --real and the matching
+credentials (an ECDS token; an Earthdata token in ~/.earthdatarc or
+EARTHDATA_TOKEN); otherwise they are synthesised from their documented schemas so
+the unit suite is complete offline.
 """
 from __future__ import annotations
 
@@ -24,19 +26,20 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from acmaddl.adapters import rhiza
+from acmaddl.adapters import weather_skills
 
-OUT = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rhiza"
+OUT = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "weather_skills"
 BBOX = "1/36/-1/38"            # N/W/S/E, 2x2 degrees over Kenya
+BBOX_S2S = "3/36/-3/40"        # ECMWF S2S is 1.5 deg: a 2x2 box holds one latitude row, which the skill squeezes away
 YESTERDAY = date.today() - timedelta(days=1)
 
 
-def _run(provider, skill, argv):
-    fn, version = rhiza.load_entrypoint(provider, skill)
+def _run(provider, skill, argv, env=None):
+    fn, version = weather_skills.load_entrypoint(provider, skill)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "out.zarr"
         err = io.StringIO()
-        with contextlib.redirect_stderr(err):
+        with weather_skills._environ(env or {}), contextlib.redirect_stderr(err):
             try:
                 fn([*argv, "-o", str(out)])
             except SystemExit as exc:
@@ -82,7 +85,7 @@ def _netcdf_safe_attrs(ds):
 
 
 def _probe(provider, skill, argv):
-    fn, _ = rhiza.load_entrypoint(provider, skill)
+    fn, _ = weather_skills.load_entrypoint(provider, skill)
     if "--probe-latest" not in argv:
         argv = [*argv, "--probe-latest"]
     out = io.StringIO()
@@ -110,7 +113,7 @@ def synthetic_forecast(source, skill, var, units, nsteps=4, step_hours=24, membe
                 "latitude": lat, "longitude": lon, "time": np.datetime64(init, "ns")},
         attrs={"Conventions": "CF-1.13", "weather_skills_source": source,
                "weather_skills_history": _history(skill, "synthetic", {"date": init, "bbox": BBOX}),
-               "acmaddl_fixture": "synthetic — re-capture with scripts/capture_rhiza_fixtures.py --real"},
+               "acmaddl_fixture": "synthetic — re-capture with scripts/capture_weather_skills_fixtures.py --real"},
     )
 
 
@@ -124,7 +127,7 @@ def synthetic_obs(source, skill, var, units, start="2026-09-20", days=4):
         coords={"time": time, "latitude": lat, "longitude": lon},
         attrs={"Conventions": "CF-1.13", "weather_skills_source": source,
                "weather_skills_history": _history(skill, "synthetic", {"start": start}),
-               "acmaddl_fixture": "synthetic — re-capture with scripts/capture_rhiza_fixtures.py --real"},
+               "acmaddl_fixture": "synthetic — re-capture with scripts/capture_weather_skills_fixtures.py --real"},
     )
 
 
@@ -157,21 +160,38 @@ def main(real: bool):
         ds = _subset(_run(provider, skill, argv))
         ds.to_netcdf(OUT / f"{name}.nc")
 
-    if real:
+    # Credentialed shapes: captured for real when the credentials are present
+    # (checked the same way the adapter checks them), synthesised otherwise, so
+    # --real on a machine with only one kind of credential still does what it can.
+    from acmaddl.errors import WeatherSkillError
+    def have(check):
+        try:
+            return dict(check())
+        except WeatherSkillError as exc:
+            print(f"  skipping real capture: {str(exc)[:90]}...")
+            return None
+    week_ago = (YESTERDAY - timedelta(days=7)).isoformat()
+    six_ago = (YESTERDAY - timedelta(days=6)).isoformat()
+    ecds = have(weather_skills.ecds_environment) if real else None
+    earthdata = have(weather_skills.earthdata_environment) if real else None
+
+    if ecds is not None:
         s2s_init = (date.today() - timedelta(days=4)).isoformat()
-        real_jobs = {
-            "s2s_forecast": (ws, "ecmwf-fetch", ["--date", s2s_init, "--bbox", BBOX, "-v", "tp"]),
-            "imerg_daily": (ws, "imerg-fetch", ["--start-time", (YESTERDAY - timedelta(days=7)).isoformat(),
-                                                "--end-time", (YESTERDAY - timedelta(days=6)).isoformat()]),
-            "smap_daily": (ws, "smap-fetch", ["--start-time", (YESTERDAY - timedelta(days=7)).isoformat(),
-                                              "--end-time", (YESTERDAY - timedelta(days=6)).isoformat(), "--bbox", BBOX]),
-        }
-        for name, (provider, skill, argv) in real_jobs.items():
-            print(f"capturing {name} <- {skill} {' '.join(argv)}", flush=True)
-            _subset(_run(provider, skill, argv)).to_netcdf(OUT / f"{name}.nc")
+        print("capturing s2s_forecast <- ecmwf-fetch", flush=True)
+        _subset(_run(ws, "ecmwf-fetch", ["--date", s2s_init, "--bbox", BBOX_S2S, "-v", "tp"], env=ecds)).to_netcdf(OUT / "s2s_forecast.nc")
     else:
-        print("synthesising s2s_forecast, imerg_daily, smap_daily (no credentials)")
+        print("synthesising s2s_forecast (no ECDS credentials)")
         synthetic_forecast("ecmwf-s2s", "ecmwf-fetch", "tp", "mm day-1").to_netcdf(OUT / "s2s_forecast.nc")
+
+    if earthdata is not None:
+        for name, skill, argv in (
+            ("imerg_daily", "imerg-fetch", ["--start-time", week_ago, "--end-time", six_ago]),
+            ("smap_daily", "smap-fetch", ["--start-time", week_ago, "--end-time", six_ago, "--bbox", BBOX]),
+        ):
+            print(f"capturing {name} <- {skill} {' '.join(argv)}", flush=True)
+            _subset(_run(ws, skill, argv, env=earthdata)).to_netcdf(OUT / f"{name}.nc")
+    else:
+        print("synthesising imerg_daily, smap_daily (no Earthdata token)")
         synthetic_obs("imerg", "imerg-fetch", "precip", "mm/day").to_netcdf(OUT / "imerg_daily.nc")
         synthetic_obs("smap", "smap-fetch", "soil_moisture", "m3 m-3").to_netcdf(OUT / "smap_daily.nc")
 

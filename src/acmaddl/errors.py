@@ -33,10 +33,10 @@ class VariableNotSupported(ValueError):
         )
 
 
-class RhizaNotInstalled(ImportError):
+class WeatherSkillsNotInstalled(ImportError):
     """The Rhiza weather-skills provider packages are not in this environment.
 
-    They live in the uv dependency group ``rhiza`` (git-pinned, so they cannot
+    They live in the uv dependency group ``weather-skills`` (git-pinned, so they cannot
     be a PyPI extra). Raised before any network I/O.
     """
 
@@ -44,11 +44,11 @@ class RhizaNotInstalled(ImportError):
         self.provider = provider
         super().__init__(
             f"Rhiza weather-skills package {provider!r} is not installed. "
-            f"Install the group: uv sync --group rhiza"
+            f"Install the group: uv sync --group weather-skills"
         )
 
 
-class RhizaSkillError(RuntimeError):
+class WeatherSkillError(RuntimeError):
     """A Rhiza skill script refused the request or failed while running.
 
     Their ``@weather_skill`` decorator prints the reason to stderr and exits

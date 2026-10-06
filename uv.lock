@@ -69,7 +69,7 @@ s3 = [
 ]
 
 [package.dev-dependencies]
-rhiza = [
+weather-skills = [
     { name = "aiohttp" },
     { name = "cf-xarray" },
     { name = "chc-skills" },
@@ -115,7 +115,7 @@ requires-dist = [
 provides-extras = ["icechunk", "s3", "dev", "demo", "geo", "mcp"]
 
 [package.metadata.requires-dev]
-rhiza = [
+weather-skills = [
     { name = "aiohttp" },
     { name = "cf-xarray", specifier = ">=0.11" },
     { name = "chc-skills", git = "https://github.com/rhiza-research/chc-skills?rev=20bce784a77a10a1fe7a368e29669a5d673eb176" },

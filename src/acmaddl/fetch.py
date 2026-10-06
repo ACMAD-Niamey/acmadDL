@@ -468,13 +468,13 @@ def fetch(product, variable, init=None, target=None, region=None,
             config["target_range"] = target_range
             cache_target_months = tuple(target_months)
 
-    # rhiza/* observation windows are clipped to what the skill has published,
+    # weather-skills/* observation windows are clipped to what the skill has published,
     # and the no-hindcast default is a trailing window ending there. Either
     # would cache a partial, day-dependent result under a day-independent key
     # (the trailing window: forever). Fold today's date into the otherwise
     # unused init_date slot for windows that reach the present; historical
     # windows and future projections (allow_future) keep stable keys.
-    if config.get("adapter") == "rhiza" and init is None and not config.get("allow_future"):
+    if config.get("adapter") == "weather_skills" and init is None and not config.get("allow_future"):
         from datetime import date as _date
         _today = _date.today()
         _months = config.get("init_months") or list(range(1, 13))
