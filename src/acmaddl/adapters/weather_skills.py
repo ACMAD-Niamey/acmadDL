@@ -1,6 +1,6 @@
 """Run Rhiza weather-skills fetchers in-process and hand their Zarr to acmadDL.
 
-Design (docs/specs/2026-10-01-weather-skills-adapter-design.md):
+Design:
 
 * Their code, unmodified. Each skill is a ``@weather_skill`` script bundled as a
   data file inside the provider wheel (``skills/<skill>/scripts/<file>.py``). We
@@ -14,9 +14,11 @@ Design (docs/specs/2026-10-01-weather-skills-adapter-design.md):
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import importlib.metadata
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -37,6 +39,7 @@ from ..errors import WeatherSkillsNotInstalled, WeatherSkillError
 from ..normalize import select_lon
 
 INSTALL_HINT = "uv sync --group weather-skills"
+PROVIDERS = ("weather-skills", "chc-skills")
 
 # Their wrapper is called with sys.stdout/sys.stderr redirected and (for ECDS)
 # os.environ edited — both process-wide. The MCP server runs fetches on
@@ -69,8 +72,42 @@ def locate_script(provider: str, skill: str) -> Path:
     return Path(str(matches[0].locate()))
 
 
-def load_entrypoint(provider: str, skill: str, entrypoint: str = "fetch"):
-    """(wrapper, version) for a skill; the wrapper is its ``@weather_skill`` function."""
+def locate_skill(skill: str, provider: str | None = None):
+    """(provider, script path) for a skill, searching the installed provider packages."""
+    candidates = (provider,) if provider else PROVIDERS
+    missing = []
+    for prov in candidates:
+        try:
+            return prov, locate_script(prov, skill)
+        except WeatherSkillsNotInstalled as exc:
+            missing.append(str(exc))
+        except WeatherSkillError:
+            continue
+    if missing and len(missing) == len(candidates):
+        raise WeatherSkillsNotInstalled(candidates[0])
+    raise WeatherSkillError(f"skill {skill!r} not found in {', '.join(candidates)}")
+
+
+def skill_kind(provider: str, skill: str) -> str:
+    """The SKILL.md ``catalog-group``: fetchers | transforms | figure | agent-tooling."""
+    try:
+        files = importlib.metadata.files(provider) or []
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise WeatherSkillsNotInstalled(provider) from exc
+    for f in files:
+        if str(f) == f"skills/{skill}/SKILL.md":
+            m = re.search(r"catalog-group:\s*(\S+)", Path(str(f.locate())).read_text())
+            return m.group(1) if m else "unknown"
+    raise WeatherSkillError(f"{provider!r} has no SKILL.md for {skill!r}")
+
+
+def load_entrypoint(provider: str, skill: str, entrypoint: str | None = "fetch"):
+    """(wrapper, version) for a skill; the wrapper is its ``@weather_skill`` function.
+
+    ``entrypoint=None`` discovers it: the module-level function whose ``parser``
+    attribute is an argparse parser (the check is explicit because Python
+    3.13's ``pathlib.Path`` class also has a ``parser`` attribute).
+    """
     key = (provider, skill, entrypoint)
     if key in _ENTRYPOINTS:
         return _ENTRYPOINTS[key]
@@ -79,11 +116,20 @@ def load_entrypoint(provider: str, skill: str, entrypoint: str = "fetch"):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    fn = getattr(module, entrypoint, None)
-    if fn is None or not hasattr(fn, "parser"):
-        raise WeatherSkillError(
-            f"{skill}: {entrypoint!r} in {path} is not a @weather_skill entrypoint"
-        )
+    if entrypoint is None:
+        found = [v for v in vars(module).values()
+                 if inspect.isfunction(v)
+                 and isinstance(getattr(v, "parser", None), argparse.ArgumentParser)]
+        if len(found) != 1:
+            raise WeatherSkillError(
+                f"{skill}: expected one @weather_skill function in {path}, found {len(found)}")
+        fn = found[0]
+    else:
+        fn = getattr(module, entrypoint, None)
+        if fn is None or not hasattr(fn, "parser"):
+            raise WeatherSkillError(
+                f"{skill}: {entrypoint!r} in {path} is not a @weather_skill entrypoint"
+            )
     version = str(getattr(module, "_SKILL_VERSION", "unknown"))
     _ENTRYPOINTS[key] = (fn, version)
     return _ENTRYPOINTS[key]

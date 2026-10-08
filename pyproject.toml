@@ -101,6 +101,12 @@ weather-skills = [
     "gcsfs",
     "h5netcdf",
     "h5py",
+    # Their transform and figure scripts (acmaddl.weather_skills.run):
+    "cartopy",
+    "xarray-regrid",
+    "nc-time-axis",
+    "pillow",
+    "shapely>=2.1",
 ]
 
 [build-system]

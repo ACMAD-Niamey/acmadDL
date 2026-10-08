@@ -770,3 +770,32 @@ def test_ecds_env_accepts_a_bare_key_in_the_rc_file(monkeypatch, tmp_path):
     (tmp_path / ".ecmwfdatastoresrc").write_text("abcd-1234-efgh\n")
     assert weather_skills.ecds_environment(home=tmp_path) == {
         "ECMWF_DATASTORES_URL": "https://ecds.ecmwf.int/api", "ECMWF_DATASTORES_KEY": "abcd-1234-efgh"}
+
+
+def test_fetch_stamps_the_product_id(fake_catalog):
+    ds = acmaddl.fetch("weather-skills/_test-fc", "precip", init="2026-09-28", region=[-1, 1, 36, 38], cache=False)
+    assert ds.attrs["acmaddl_product"] == "weather-skills/_test-fc"
+
+
+# ── skill discovery for the runner ──────────────────────────────────────────
+
+@needs_group
+def test_load_entrypoint_discovers_the_decorated_function():
+    fn, version = weather_skills.load_entrypoint("weather-skills", "clip-region", entrypoint=None)
+    assert fn.__name__ == "clip_region" and version
+
+
+@needs_group
+def test_locate_skill_searches_both_providers():
+    assert weather_skills.locate_skill("clip-region")[0] == "weather-skills"
+    assert weather_skills.locate_skill("subc-mme-fetch")[0] == "chc-skills"
+    with pytest.raises(WeatherSkillError, match="not found"):
+        weather_skills.locate_skill("no-such-skill")
+
+
+@needs_group
+def test_skill_kind_reads_the_catalog_group():
+    assert weather_skills.skill_kind("weather-skills", "clip-region") == "transforms"
+    assert weather_skills.skill_kind("weather-skills", "plot") == "figure"
+    assert weather_skills.skill_kind("weather-skills", "resolve-region") == "agent-tooling"
+    assert weather_skills.skill_kind("weather-skills", "chirps-fetch") == "fetchers"

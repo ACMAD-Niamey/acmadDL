@@ -10,6 +10,7 @@ contract. Marked integration+network; skipped in the default unit run.
 Earthdata-backed products (imerg-daily, smap-daily) skip unless an Earthdata
 Login token is set (EARTHDATA_TOKEN or ~/.earthdatarc).
 """
+import json
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -144,3 +145,18 @@ def test_ecmwf_s2s_precip():
     ds = acmaddl.fetch("weather-skills/ecmwf-s2s", "precip", init=init, region=REGION, cache=False)
     _check_forecast(ds, "precip", "mm/day")
     assert ds.sizes["member"] == 101 and 0 in ds["member"].values
+
+
+def test_runner_round_trip_on_a_live_product():
+    """acmadDL fetch -> their clip-region via the runner == acmadDL's own crop; and
+    their provenance tool reads the chain fetch -> acmaddl -> clip-region."""
+    from acmaddl import weather_skills as ws
+    init = _latest("weather-skills/ifs-ens-15d")
+    ds = acmaddl.fetch("weather-skills/ifs-ens-15d", "precip", init=init, region=[-4, 4, 34, 42], cache=False)
+    clipped = ws.run("clip-region", ds, bbox=[-2, 2, 36, 40])
+    ours = ds.sel(lat=slice(-2, 2), lon=slice(36, 40))
+    assert clipped.sizes["lat"] == ours.sizes["lat"] and clipped.sizes["lon"] == ours.sizes["lon"]
+    np.testing.assert_allclose(clipped["precip"].transpose(*ours["precip"].dims).values, ours["precip"].values)
+    chain = json.loads(ws.run("provenance", clipped, format="json"))
+    chain = chain if isinstance(chain, list) else next(iter(chain.values()))
+    assert [e["skill"] for e in chain] == ["dynamical-fetch", "acmaddl", "clip-region"]

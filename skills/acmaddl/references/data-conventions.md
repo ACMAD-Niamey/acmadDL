@@ -98,6 +98,26 @@ The `weather-skills` adapter runs a Rhiza weather-skills fetcher script in-proce
 - Observation windows: `hindcast=(y0, y1)` × `months=` collapse into contiguous month runs, clipped to the skill's own `--probe-latest` day (or yesterday), chunked by `window_days` for the global fetchers (each chunk cropped to the bbox before concatenation); no `hindcast` = trailing `window_days` (default 10) days. `allow_future` (CMIP6) disables the clip.
 - `year_index=True` is not blocked but, with a single real-time issuance and no hindcast, collapses to a one-year axis and means nothing.
 
+### Outbound mapping (ours → theirs, `acmaddl.weather_skills.to_standard_dataset`)
+
+| acmadDL / africas2s | weather-skills standard dataset |
+|---|---|
+| `lat`, `lon`, `time`, `member` | unchanged (their vocabulary accepts these spellings) |
+| `lead_time` as `timedelta64` | unchanged |
+| `lead_time` numeric, `units` hours/days | `timedelta64` |
+| `lead_time` numeric in months | refused (`ValueError`): collapse the lead first |
+| `(init_time=1, lead_time, …)` | their fetcher layout: scalar `time` (the init) + `step` |
+| `(init_time=n>1, lead_time, …)` | unchanged |
+| `(year, member, lat, lon)` | `init_time` at `init_month`/`init_day` per year + one `lead_time` from `lead=` |
+| `(member, lat, lon)` / `(lat, lon)` | `init_time` from `init=` + one `lead_time` from `lead=` |
+| 2-D valid `time` coordinate | dropped (their `step-to-time` derives it) |
+| units `C`, `K`, `mm/day`, `mm/month`, `kg/m2`, `m3/m3`, `%` | `degree_Celsius`, `kelvin`, `mm day-1`, `mm month-1`, `kg m-2`, `1`, `percent` |
+| `precip`/`temp`-like variable without units | refused (their classifier requires units for those kinds) |
+| dict-valued attrs | JSON strings |
+| `weather_skills_history` | appended with an `acmaddl` entry (`record=False`: unchanged); `weather_skills_source` = `source` or `acmaddl:<product>` |
+
+`from_standard_dataset` is the inverse: their names and pint spellings back to ours (checked by unit equality, so `millimeter / day` → `mm/day`), latitude ascending, the forecast reshape, and the valid time as acmadDL's 2-D `time` coordinate.
+
 ## Longitude-convention helpers (`normalize.py`, `fetch.py`)
 
 The 0-360 vs -180..180 longitude footgun is now handled by named helpers rather than ad-hoc slicing:

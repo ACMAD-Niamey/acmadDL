@@ -627,6 +627,9 @@ def fetch(product, variable, init=None, target=None, region=None,
     # Rebuild so the result round-trips through to_netcdf: OPeNDAP/CF sources carry
     # bounds vars + stale encoding that otherwise raise "NetCDF: String match to name
     # in use" on write (in the returned object as well as the save() path below).
+    # Which catalog entry produced this. acmaddl.weather_skills.to_standard_dataset
+    # reads it to label the dataset's provenance for Rhiza's skills.
+    clean.attrs["acmaddl_product"] = product
     clean = sanitize_for_netcdf(clean)
 
     if destination:

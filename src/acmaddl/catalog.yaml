@@ -25,7 +25,7 @@
 #
 #   Rhiza weather-skills products (`weather-skills/*`, adapter: weather_skills) run a skill script
 #   from the pinned weather-skills / chc-skills packages in-process (see
-#   adapters/weather_skills.py and docs/specs/2026-10-01-weather-skills-adapter-design.md).
+#   adapters/weather_skills.py).
 #   Entry knobs:
 #     provider:        distribution holding the skill (default weather-skills)
 #     skill:           skills/<skill>/scripts/*.py inside that distribution

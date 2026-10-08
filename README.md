@@ -244,6 +244,25 @@ The `weather-skills/*` products run [Rhiza Research's weather-skills](https://gi
 
 `weather-skills/ecmwf-s2s` reads ECDS credentials from `ECMWF_DATASTORES_URL`/`ECMWF_DATASTORES_KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc` (a Copernicus CDS token is refused with instructions). IMERG daily and SMAP use a NASA Earthdata Login token, in `~/.earthdatarc` or `EARTHDATA_TOKEN` (username/password are refused), see [NASA Earthdata setup](#nasa-earthdata-setup); IMERG also needs the "NASA GESDISC DATA ARCHIVE" application approved in your Earthdata profile.
 
+### Running their transforms, figures and tools on acmadDL data
+
+The same packages also carry Rhiza's 15 transforms, 8 figure makers and 5 agent tools. `acmaddl.weather_skills.run` runs any of them in-process on acmadDL or africas2s xarray and hands the result back in acmadDL's shape:
+
+```python
+from acmaddl import weather_skills as ws
+
+fc = acmaddl.fetch("weather-skills/ifs-ens-15d", "precip", init="2026-10-01", region=[-4, 4, 34, 42])
+clipped = ws.run("clip-region", fc, bbox=[-2, 2, 36, 40])          # a dataset, acmadDL shape
+png     = ws.run("plot", fc, variable="precip", output="map.png")  # a PNG path
+lineage = ws.run("provenance", clipped, format="json")             # text: fetch -> acmaddl -> clip-region
+ws.skills(kind="transforms")                                       # what is available, with flags
+```
+
+- **Inputs** are xarray objects (converted by `to_standard_dataset`), paths to existing Zarr stores, or strings for a tool's positional argument (`ws.run("resolve-region", "Kenya")`). Keyword arguments are the skill's own flags (`to_standard=True`, `reduce=["lat", "lon"]`, `bbox=[lat_s, lat_n, lon_w, lon_e]` reordered for them); an unknown flag is refused with the valid list.
+- **What comes back** depends on the skill's kind: transforms return a dataset (`raw=True` keeps their standard dataset), figures return the PNG `Path` (`output=` says where; otherwise acmadDL's scratch dir), agent tools return their stdout text. `output=` on anything but a figure is refused. Fetchers are refused in favour of `acmaddl.fetch`; `submit-feedback` is refused because it posts to Rhiza's tracker.
+- **The converter** (`to_standard_dataset`): coordinates pass through (their vocabulary accepts `lat`/`lon`/`lead_time`/`member`); units become pint-parseable (`C` → `degree_Celsius`); a numeric lead axis in hours or days becomes a timedelta, monthly leads are refused; an africas2s `(year, member, lat, lon)` hindcast needs `init_month=` and `lead=`; a field with no time axis needs `init=`; a single issuance is written in their fetcher layout (scalar `time`, `step`). Their provenance chain is appended with an `acmaddl` entry, so their `provenance` tool reads our data's lineage honestly; read-only tools do not add an entry.
+- **Known limits at the pinned versions**: their `downscale` and `coarsen` fail in acmadDL's environment on their own Zarr too (an xarray-regrid vs pint-xarray incompatibility), and `unit-convert --to-units` reports a missing units attribute where `--to-standard` works. See the troubleshooting reference.
+
 ### Reanalysis
 
 | Product | Model / system | Host | Adapter | Variables | Cadence | Members (F/H) | Hindcast | Forecast |

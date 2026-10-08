@@ -71,6 +71,7 @@ s3 = [
 [package.dev-dependencies]
 weather-skills = [
     { name = "aiohttp" },
+    { name = "cartopy" },
     { name = "cf-xarray" },
     { name = "chc-skills" },
     { name = "dask" },
@@ -79,9 +80,13 @@ weather-skills = [
     { name = "gcsfs" },
     { name = "h5netcdf" },
     { name = "h5py" },
+    { name = "nc-time-axis" },
+    { name = "pillow" },
     { name = "pint-xarray" },
+    { name = "shapely" },
     { name = "weather-skills" },
     { name = "weather-skills-core" },
+    { name = "xarray-regrid" },
 ]
 
 [package.metadata]
@@ -117,6 +122,7 @@ provides-extras = ["icechunk", "s3", "dev", "demo", "geo", "mcp"]
 [package.metadata.requires-dev]
 weather-skills = [
     { name = "aiohttp" },
+    { name = "cartopy" },
     { name = "cf-xarray", specifier = ">=0.11" },
     { name = "chc-skills", git = "https://github.com/rhiza-research/chc-skills?rev=20bce784a77a10a1fe7a368e29669a5d673eb176" },
     { name = "dask" },
@@ -125,9 +131,13 @@ weather-skills = [
     { name = "gcsfs" },
     { name = "h5netcdf" },
     { name = "h5py" },
+    { name = "nc-time-axis" },
+    { name = "pillow" },
     { name = "pint-xarray", specifier = ">=0.6" },
+    { name = "shapely", specifier = ">=2.1" },
     { name = "weather-skills", git = "https://github.com/rhiza-research/weather-skills?rev=4f95364b323e601f5cbd43ee3af39d2d77617596" },
     { name = "weather-skills-core", git = "https://github.com/rhiza-research/weather-skills-core?rev=e118b9531181224cb1459efbd9f2b114117f0a79" },
+    { name = "xarray-regrid" },
 ]
 
 [[package]]
@@ -3169,6 +3179,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e9/f3/257adc69a71011b4c8cda321b00f02c5bf1980ae38ffd05a58d9632d4de8/narwhals-2.20.0.tar.gz", hash = "sha256:c10994975fa7dc5a68c2cffcddbd5908fc8ebb2d463c5bab085309c0ee1f551e", size = 627848, upload-time = "2026-04-20T12:11:45.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/69/f24d3d1c38ad69e256138b4ec2452a8c7cf66be49dc214771ae99dd4f0a0/narwhals-2.20.0-py3-none-any.whl", hash = "sha256:16e750ea5507d4ba6e8d03455b5f93a535e0405976561baea235bca5dc9f475d", size = 449373, upload-time = "2026-04-20T12:11:43.596Z" },
+]
+
+[[package]]
+name = "nc-time-axis"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cftime" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/39/c7/ceaba2047ef4e08660a5a89a71cea30547bddb0e51236dab2dcb771a6fe1/nc-time-axis-1.4.1.tar.gz", hash = "sha256:72d80f492f34bbf59490838d8cb3d92f14e88900b0ee35498b2b33c82795eb81", size = 66231, upload-time = "2022-04-20T11:29:01.471Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/89/dbeab77a217f8fbda97a637acf1e3f0ce8c9c9fb3f5e5d1ff843da859520/nc_time_axis-1.4.1-py3-none-any.whl", hash = "sha256:96a6fb28cede0d07998fcd666599f76e51a086e1929fbcbfb758c1d0f3e7b0d1", size = 17757, upload-time = "2022-04-20T11:29:00Z" },
 ]
 
 [[package]]
