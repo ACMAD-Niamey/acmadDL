@@ -314,6 +314,6 @@ cd acmadDL
 uv sync
 ```
 
-## Relationship to DeepScale
+## Relationship to AfricaS2S
 
-acmadDL handles ingestion and normalization; [DeepScale](https://github.com/accord-research/deepscale) handles downscaling and skill evaluation. Their interface is standardized xarray.
+acmadDL handles ingestion and normalization; [AfricaS2S](https://github.com/ACMAD-Niamey/africas2s) handles downscaling and skill evaluation. Their interface is standardized xarray.
