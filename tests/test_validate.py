@@ -615,3 +615,22 @@ class TestUsable:
     def test_dataset_input_is_a_type_error(self):
         with pytest.raises(TypeError):
             usable(xr.Dataset({"precip": _da([[1.0]])}))
+
+
+# --- SST arrives in Kelvin (every catalog entry sets target_units: K) ------------
+def test_usable_sst_honours_kelvin_contract():
+    import numpy as np, xarray as xr
+    from acmaddl import usable
+    kelvin = xr.DataArray(np.full((4, 4), 303.0), attrs={"units": "K"})
+    assert usable(kelvin, variable="sst"), "a correctly normalised 303 K field must pass"
+    celsius = xr.DataArray(np.full((4, 4), 29.8), attrs={"units": "C"})
+    assert usable(celsius, variable="sst")
+    # 29.8 labelled K is physically absurd — the cfsv2 mislabelling class
+    mislabelled = xr.DataArray(np.full((4, 4), 29.8), attrs={"units": "K"})
+    assert not usable(mislabelled, variable="sst")
+
+
+def test_cfsv2_sst_declared_in_source_units():
+    from acmaddl import catalog
+    v = catalog.info("nmme/cfsv2")["variables"]["sst"]
+    assert v["units"] == "C" and v["target_units"] == "K"
