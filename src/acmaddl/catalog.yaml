@@ -63,7 +63,7 @@ nmme/cfsv2:
       target_units: C
     sst:
       native_name: sst
-      units: K
+      units: C   # IRI DL serves Celsius; normalize() converts to the K contract
       target_units: K
   # The endpoint advertises M=28, but live HINDCAST and FORECAST responses have
   # four structurally empty trailing slots. Preserve the 24 usable members.

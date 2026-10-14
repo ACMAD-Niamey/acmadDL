@@ -88,6 +88,19 @@ _VALUE_RANGES = {
 # unit bug — ERA5 serving potential evaporation as a negative upward flux is the
 # case in point, and a 50-wide slack would wave a flipped pev field straight
 # through.
+_KELVIN_UNITS = {"k", "kelvin", "degk", "deg_k", "degrees_kelvin", "degree_kelvin"}
+
+
+def _range_for_units(variable, units, lo, hi):
+    """Shift a Celsius-declared temperature range to Kelvin when the field says
+    it is in Kelvin. The delivered contract for ``sst`` is Kelvin (every
+    catalog entry sets ``target_units: K``), so a Celsius-only range rejected
+    every correctly normalised SST field while passing a mislabelled one."""
+    if variable in ("sst", "temp") and str(units or "").strip().lower() in _KELVIN_UNITS:
+        return lo + 273.15, hi + 273.15
+    return lo, hi
+
+
 _RANGE_SLACK = {"precip": 1.0, "pev": 1.0}
 _DEFAULT_RANGE_SLACK = 50.0
 
@@ -138,6 +151,7 @@ def usable(field, *, variable=None, units=None, limit=None, fill=1e10,
         lo, hi = -5000.0, 5000.0
     else:
         lo, hi = _VALUE_RANGES[variable]
+        lo, hi = _range_for_units(variable, units, lo, hi)
         if variable == "precip":
             hi = {"mm/day": 500.0, "mm/month": 3000.0}.get(units, 5000.0)
         slack = _RANGE_SLACK.get(variable, _DEFAULT_RANGE_SLACK)
@@ -201,6 +215,7 @@ def check_structure(ds, product, variable, product_config=None):
     # Physically plausible values
     if variable in _VALUE_RANGES:
         lo, hi = _VALUE_RANGES[variable]
+        lo, hi = _range_for_units(variable, units, lo, hi)
         if variable == "precip" and da.attrs.get("units") == "mm":
             hi = 5000.0  # accumulated target-season / multi-day precipitation
         elif variable == "precip" and da.attrs.get("units") == "mm/month":
