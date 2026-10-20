@@ -14,6 +14,14 @@ The distribution is published as `acmadDL`; the import name is `acmaddl`. acmadD
 
 Most CDS-based products (`c3s/*`, `obs/era5`) need CDS or ECMWF Data Store credentials; see [CDS / ECDS setup](#cds--ecds-setup).
 
+The `weather-skills/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetchers in-process. Their packages are git-pinned, so they live in a uv dependency group rather than an extra:
+
+```bash
+uv sync --group weather-skills
+```
+
+This requires uv: the group needs acmadDL's `xarray>=2026.7` override of sheerwater's stale pin, which plain `pip` cannot apply. See [Rhiza weather-skills](#weather-skills-weather-skills).
+
 ## Core API
 
 ```python
@@ -188,6 +196,73 @@ empty trailing slots exposed by the upstream endpoint.
 
 `c3s/ecmwf-s2s` is date-keyed: call it with `init="YYYY-MM-DD"` (the issuance date). Its reforecasts are generated on the fly, so there is no fixed hindcast window. It uses the ECMWF Data Store (`ecds.ecmwf.int`), a separate service from the Copernicus CDS; see [ECMWF Data Store (ECDS) setup](#ecmwf-data-store-ecds-setup).
 
+### Weather skills (`weather-skills/*`)
+
+The `weather-skills/*` products run [Rhiza Research's weather-skills](https://github.com/weather-skills/weather-skills-catalog) fetcher scripts **unmodified, in-process**, and reshape only their output. Install the dependency group first (`uv sync --group weather-skills`; see [Installation](#installation)). What they share:
+
+- **Forecasts are one issuance per fetch**: `init="YYYY-MM-DD"`. There is no reforecast stream, so they cannot feed `assemble()` hindcast tuples; for ECMWF S2S reforecasts keep using `c3s/ecmwf-s2s` with `reforecast=True`.
+- **Member 0 is the control run** and is kept; `forecast_members` counts it.
+- **`lead_time` is a `timedelta64` of native steps** (daily for ECMWF S2S, 3-6 hourly for IFS-ENS and GEFS, one step for a SubC outlook); `time` is the derived valid time. Aggregate downstream.
+- **Observation windows** come from `hindcast=(y, y)` plus `months=[...]`, clipped to the skill's own published latest day; without `hindcast` you get the trailing 10 days. `weather-skills/chirps-daily` and `weather-skills/imerg-daily*` load the full global grid per day upstream, so acmadDL fetches them in 10-day chunks and crops each chunk as it loads — keep those windows short.
+- **Provenance** travels with the data: their `weather_skills_history` and `weather_skills_source` attributes stay on the output (so their `provenance` skill reads our files), plus `weather_skills_name`, `weather_skills_version` and `weather_skills_pin` (the provider commit).
+- `weather-skills/ifs-ens-46d` is the same ECMWF extended-range ensemble as `weather-skills/ecmwf-s2s`, served credential-free and without the 2-day embargo from the dynamical.org open catalog.
+- The ICON-EU and MRMS entries are regional (Europe, CONUS); an African bounding box returns an empty selection. They are catalogued for completeness. dynamical.org's HRDPS and HRRR datasets sit on projected grids, which their fetcher refuses, so they are not catalogued.
+
+**Forecasts**
+
+| Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
+|---|---|---|---|---|---|
+| `weather-skills/ecmwf-s2s` | ecmwf-fetch | precip, temp, sst, d2m, mx2t6, mn2t6, u10, v10, msl, cape, tcw | daily | 101 | ECDS |
+| `weather-skills/ifs-ens-15d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) | precip, temp | 3-6 hourly | 51 | none |
+| `weather-skills/ifs-ens-46d` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) | precip, temp, tmax, tmin, sst | daily | 101 | none |
+| `weather-skills/ifs-ens-46d-6h` | dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree`) | precip, tmax, tmin | 6 hourly | 101 | none |
+| `weather-skills/aifs-ens` | dynamical-fetch (`ecmwf-aifs-ens-forecast`) | precip, temp | 6 hourly | 51 | none |
+| `weather-skills/aifs-single` | dynamical-fetch (`ecmwf-aifs-single-forecast`) | precip, temp | 6 hourly | - | none |
+| `weather-skills/gefs-35d` | dynamical-fetch (`noaa-gefs-forecast-35-day`) | precip, temp | 3-6 hourly | 31 | none |
+| `weather-skills/gfs` | dynamical-fetch (`noaa-gfs-forecast`) | precip, temp | 3 hourly | - | none |
+| `weather-skills/icon-eu-5d` | dynamical-fetch (`dwd-icon-eu-forecast-5-day`) | precip, temp | hourly | - | none |
+| `weather-skills/subc-mme-7d` | subc-mme-fetch (`7d`) | precip, temp, sst, tasmax, tasmin, tdps | 7-day outlook | - | none |
+| `weather-skills/subc-mme-15d` | subc-mme-fetch (`15d`) | precip, temp, sst, tasmax, tasmin, tdps | 15-day outlook | - | none |
+| `weather-skills/subc-mme-30d` | subc-mme-fetch (`30d`) | precip, temp, sst, tasmax, tasmin, tdps | 30-day outlook | - | none |
+
+**Observations and analyses**
+
+| Product | Skill (dataset) | Variables | Cadence | Members | Credentials |
+|---|---|---|---|---|---|
+| `weather-skills/gefs-analysis` | dynamical-fetch (`noaa-gefs-analysis`) | precip, temp | 3 hourly | - | none |
+| `weather-skills/gfs-analysis` | dynamical-fetch (`noaa-gfs-analysis`) | precip, temp | hourly | - | none |
+| `weather-skills/imerg-early-30min` | dynamical-fetch (`nasa-imerg-analysis-early`) | precip | half-hourly | - | none |
+| `weather-skills/imerg-late-30min` | dynamical-fetch (`nasa-imerg-analysis-late`) | precip | half-hourly | - | none |
+| `weather-skills/mrms-hourly` | dynamical-fetch (`noaa-mrms-conus-analysis-hourly`) | precip | hourly | - | none |
+| `weather-skills/chirps-daily` | chirps-fetch | precip | daily | - | none |
+| `weather-skills/imerg-daily` | imerg-fetch (`late`) | precip | daily | - | Earthdata |
+| `weather-skills/imerg-daily-final` | imerg-fetch (`final`) | precip | daily | - | Earthdata |
+| `weather-skills/era5` | arco-era5-fetch | precip, temp, sst | hourly | - | none |
+| `weather-skills/oisst-daily` | oisst-fetch | sst | daily | - | none |
+| `weather-skills/smap-daily` | smap-fetch | soil_moisture | daily | - | Earthdata |
+| `weather-skills/cmip6` | cmip6-fetch (`ssp245`) | precip, temp | monthly | - | none |
+
+`weather-skills/ecmwf-s2s` reads ECDS credentials from `ECMWF_DATASTORES_URL`/`ECMWF_DATASTORES_KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc` (a Copernicus CDS token is refused with instructions). IMERG daily and SMAP use a NASA Earthdata Login token, in `~/.earthdatarc` or `EARTHDATA_TOKEN` (username/password are refused), see [NASA Earthdata setup](#nasa-earthdata-setup); IMERG also needs the "NASA GESDISC DATA ARCHIVE" application approved in your Earthdata profile.
+
+### Running their transforms, figures and tools on acmadDL data
+
+The same packages also carry Rhiza's 15 transforms, 8 figure makers and 5 agent tools. `acmaddl.weather_skills.run` runs any of them in-process on acmadDL or africas2s xarray and hands the result back in acmadDL's shape:
+
+```python
+from acmaddl import weather_skills as ws
+
+fc = acmaddl.fetch("weather-skills/ifs-ens-15d", "precip", init="2026-10-01", region=[-4, 4, 34, 42])
+clipped = ws.run("clip-region", fc, bbox=[-2, 2, 36, 40])          # a dataset, acmadDL shape
+png     = ws.run("plot", fc, variable="precip", output="map.png")  # a PNG path
+lineage = ws.run("provenance", clipped, format="json")             # text: fetch -> acmaddl -> clip-region
+ws.skills(kind="transforms")                                       # what is available, with flags
+```
+
+- **Inputs** are xarray objects (converted by `to_standard_dataset`), paths to existing Zarr stores, or strings for a tool's positional argument (`ws.run("resolve-region", "Kenya")`). Keyword arguments are the skill's own flags (`to_standard=True`, `reduce=["lat", "lon"]`, `bbox=[lat_s, lat_n, lon_w, lon_e]` reordered for them); an unknown flag is refused with the valid list.
+- **What comes back** depends on the skill's kind: transforms return a dataset (`raw=True` keeps their standard dataset), figures return the PNG `Path` (`output=` says where; otherwise acmadDL's scratch dir), agent tools return their stdout text. `output=` on anything but a figure is refused. Fetchers are refused in favour of `acmaddl.fetch`; `submit-feedback` is refused because it posts to Rhiza's tracker.
+- **The converter** (`to_standard_dataset`): coordinates pass through (their vocabulary accepts `lat`/`lon`/`lead_time`/`member`); units become pint-parseable (`C` → `degree_Celsius`); a numeric lead axis in hours or days becomes a timedelta, monthly leads are refused; an africas2s `(year, member, lat, lon)` hindcast needs `init_month=` and `lead=`; a field with no time axis needs `init=`; a single issuance is written in their fetcher layout (scalar `time`, `step`). Their provenance chain is appended with an `acmaddl` entry, so their `provenance` tool reads our data's lineage honestly; read-only tools do not add an entry.
+- **Known limits at the pinned versions**: their `downscale` and `coarsen` fail in acmadDL's environment on their own Zarr too (an xarray-regrid vs pint-xarray incompatibility), and `unit-convert --to-units` reports a missing units attribute where `--to-standard` works. See the troubleshooting reference.
+
 ### Reanalysis
 
 | Product | Model / system | Host | Adapter | Variables | Cadence | Members (F/H) | Hindcast | Forecast |
@@ -273,6 +348,33 @@ Required for `c3s/ecmwf-s2s` (and any future product whose catalog entry uses `c
    ```bash
    uv run pytest tests/test_integration.py::test_fetch_c3s_ecmwf_s2s_precip -v
    ```
+
+### NASA Earthdata setup
+
+Required for `weather-skills/imerg-daily`, `weather-skills/imerg-daily-final` and `weather-skills/smap-daily`. Earthdata is NASA's single login for GES DISC (IMERG) and NSIDC (SMAP); it is free and separate from the ECMWF services above.
+
+1. Create an account at <https://urs.earthdata.nasa.gov>.
+2. For IMERG, approve the "NASA GESDISC DATA ARCHIVE" application once: profile → Applications → Authorized Apps → Approve More Applications. Without it IMERG downloads return 401 even with valid credentials. SMAP needs no extra approval.
+3. Generate a token (profile → Generate Token; Earthdata Login user tokens last about 60 days) and put it, alone, in `~/.earthdatarc`:
+
+   ```bash
+   echo '<YOUR-EARTHDATA-TOKEN>' > ~/.earthdatarc
+   chmod 600 ~/.earthdatarc
+   ```
+
+   Or set `EARTHDATA_TOKEN` per session or in CI, which takes precedence over the file. acmadDL maps the file onto that variable for the duration of each call, which is what the `earthaccess` library reads. **Only tokens are accepted**: `EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD` and a `~/.netrc` entry are refused on purpose, since a revocable, short-lived token is the safer credential to keep around.
+
+   acmadDL checks that a token exists before running the skill and raises `WeatherSkillError` otherwise; left to itself, the IMERG script would wait on an interactive login prompt.
+
+4. Test the connection:
+
+   ```bash
+   uv run pytest -m "integration and not cds" tests/test_weather_skills_integration.py -k "imerg_daily or smap" -v
+   ```
+
+### ECDS for `weather-skills/ecmwf-s2s`
+
+The ECMWF S2S skill requires `ECMWF_DATASTORES_URL` / `ECMWF_DATASTORES_KEY` in the environment. acmadDL fills them for the duration of the call from the standard file `~/.ecmwfdatastoresrc` (either the bare key on one line, or `url:` and `key:` lines in the client's own cdsapirc style), or from an ECDS-pointing `~/.cdsapirc` or `CDSAPI_URL`/`CDSAPI_KEY`, so the ECDS setup above is enough; a Copernicus CDS key is refused with instructions rather than sent.
 
 ## Cache configuration
 

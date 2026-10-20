@@ -13,7 +13,11 @@ Then accept each dataset's licence once in the CDS web UI (a 403 error names the
 
 ### ECMWF Data Store / ECDS (`c3s/ecmwf-s2s`)
 
-A **separate** service from Copernicus CDS — CDS credentials do not work. Create an ECDS account, then point credentials at `https://ecds.ecmwf.int/api` via `~/.cdsapirc` or the `CDSAPI_URL`/`CDSAPI_KEY` env vars. Two licence layers must be accepted: the site-wide Terms of Use and the per-dataset licence.
+A **separate** service from Copernicus CDS — CDS credentials do not work. Create an ECDS account, then point credentials at `https://ecds.ecmwf.int/api` via `~/.cdsapirc` or the `CDSAPI_URL`/`CDSAPI_KEY` env vars. Two licence layers must be accepted: the site-wide Terms of Use and the per-dataset licence. `weather-skills/ecmwf-s2s` uses the same setup: acmadDL maps `~/.ecmwfdatastoresrc` (the bare key alone, or `url:`/`key:` lines) or an ECDS-pointing `~/.cdsapirc` / `CDSAPI_*` onto the `ECMWF_DATASTORES_URL`/`ECMWF_DATASTORES_KEY` variables the skill requires in its environment (or set those directly).
+
+### NASA Earthdata (`weather-skills/imerg-daily*`, `weather-skills/smap-daily`)
+
+Free account at `urs.earthdata.nasa.gov`; IMERG additionally needs the "NASA GESDISC DATA ARCHIVE" application approved on the account (401 otherwise). **Token only**: generate an Earthdata Login user token (~60-day life) and either set `EARTHDATA_TOKEN` or put the bare token, alone on one line, in `~/.earthdatarc` (`chmod 600`); acmadDL maps the file onto the variable for each call. `EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD` and `~/.netrc` are refused on purpose. The check runs before the skill — the IMERG script's own login would otherwise fall through to an interactive prompt and hang.
 
 ### IRI Data Library (`c3s/ecmwf-seas51c`, iridl adapter)
 
@@ -46,6 +50,24 @@ The s3 adapter shells out to the **AWS CLI** (`aws s3 ls/cp`) — configure `aws
 | `DegenerateResponseError` | acmaddl's guard rejected a bitwise-constant / zero-filled (or, on the OPeNDAP obs path, all-NaN) response before it reached the cache. For OPeNDAP obs (`obs/ersst-v5`, `obs/cmap`) this is always on — commonly it means a truncated chunk, or (for the ocean-only `obs/ersst-v5`) a **land-only bbox** that is legitimately all-NaN (request an ocean-containing region). On the general path it only fires when you passed `degenerate_attempts>1`; acmaddl already retried with the cache bypassed, so a persistent error means the source itself is returning bad data. |
 | `AttributeError` on sheerwater's `chirps_raw_live` | Upstream sheerwater removed the near-real-time function; `obs/chirps-live-rhiza` fails until it is restored — for current-season CHIRPS use the native CHC products (subject to their rate limits) |
 | Full CrowdSec 403 on **every** CHC path including the site root | The IP ban is site-wide and time-limited (hours to days) — wait it out; don't retry, it can extend the ban |
+| `WeatherSkillsNotInstalled` | The `weather-skills/*` products need the Rhiza provider packages: `uv sync --group weather-skills` (uv only — see Install notes) |
+| `WeatherSkillError: ... embargo` / `no data for this init` | ecmwf-fetch refused the init: real-time ECMWF S2S is embargoed 2 days — pick an older `init`, or use the credential-free `weather-skills/ifs-ens-46d` |
+| `WeatherSkillError: ... ECMWF Data Store credentials` | `weather-skills/ecmwf-s2s` needs an ECDS token (`ECMWF_DATASTORES_URL`/`KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc`); a Copernicus CDS key is a different token |
+| `WeatherSkillError: this product needs NASA Earthdata credentials` | `weather-skills/imerg-daily*` and `weather-skills/smap-daily` require an Earthdata Login token (`EARTHDATA_TOKEN`, or the bare token in `~/.earthdatarc`) before running the skill; username/password and `.netrc` are refused — imerg-fetch's own login would otherwise wait on an interactive prompt |
+| `Final chunk of Zarr array must be the same size or smaller than the first` on `weather-skills/gefs-35d` `temp` | Upstream dynamical-fetch bug at the pinned commit: the GEFS temperature subset straddles the source's chunk edges for some boxes (2S-2N fails, 0-4N works). Shift the box slightly; `precip` is unaffected |
+| `ValueError: lead_time is in months` from `weather_skills.to_standard_dataset` | Their lead axis is a timedelta; a monthly lead has no fixed length. Collapse the lead first (`year_index=True`, africas2s `lead_window_reduce`) and convert the result |
+| `ValueError: a 'year' axis has no place in their vocabulary` | An africas2s hindcast needs `init_month=` (and `lead=`) so each year becomes an `init_time` |
+| `ValueError: no time axis: pass init=` | A bare `(member, lat, lon)` field needs its issuance date to become their forecast layout |
+| `ValueError: variable 'precip' looks like a precipitation/temperature kind, which their skills require units for` | Set `attrs["units"]` on the variable before `weather_skills.run` |
+| `ValueError: <skill> has no flag --x; valid flags: ...` | Keywords to `weather_skills.run` are the skill's own flags, underscores for hyphens (`to_standard=True`, `time_dim="time"`) |
+| `Mixing chunked array types ... pint.Quantity ... dask` from `downscale` / `coarsen` | Fails on their own Zarr too at the pinned versions (xarray-regrid vs pint-xarray); upstream issue, no acmadDL workaround yet |
+| `unit-convert ... has no units attr` with `--to-units` | Their `--to-units` path; use `to_standard=True` (`--to-standard`), which works |
+| Figure PNG "disappeared" | Without `output=` the file is moved to acmadDL's scratch dir (`ACMADDL_TMP_DIR`, default `~/.nuthatch/acmaddl/_tmp`) as `acmaddl-<skill>-<id>.png` and the `Path` returned; pass `output=` to choose the location. `output=` on a transform or tool is refused: those return their result |
+| Their figure scripts pin `matplotlib<3.10` | That pin governs `uv run --script`; in-process they run acmadDL's matplotlib (3.11 at the time of writing) and the figure tests pass on it. If a plot skill misbehaves after a matplotlib upgrade, that is the first suspect |
+| `WeatherSkillError: ... need at least 2 points on 'time'` | Their analysis/monthly fetchers cannot stamp an interval from one time point — widen the window (two days, or two months for `weather-skills/cmip6`) |
+| `ValueError: observation window ... not published yet` | The requested months lie past the skill's `--probe-latest` day — ask for an earlier month or drop `hindcast` for the trailing window |
+| `ValueError: ... pass init='YYYY-MM-DD'` on a `weather-skills/*` forecast | These are issuance-keyed: a full date, one issuance per fetch; there is no reforecast stream |
+| `MemoryError` on `weather-skills/chirps-daily` / `weather-skills/imerg-daily*` | Their skill loads the full global grid per day; acmaddl chunks by `window_days` (10) and crops per chunk — pass `months=` or a one-year `hindcast`, never a decade |
 
 ## OPeNDAP silent truncation and the degenerate-response guard
 
@@ -91,6 +113,7 @@ The guard protects the *cache*; the complementary per-field check for a *workflo
 ## Install notes
 
 - `pip install acmadDL`; `import acmaddl`. Python ≥ 3.12.
-- Under **uv**, `[tool.uv] override-dependencies = ["zarr>=3.1.0"]` resolves the sheerwater (`zarr==2.18.3` pin) vs icechunk (`zarr>=3`) conflict. Under plain pip, the `icechunk` extra is opt-in for the same reason.
+- Under **uv**, `[tool.uv] override-dependencies = ["zarr>=3.1.0", "xarray>=2026.7"]` resolves sheerwater's stale `zarr==2.18.3` / `xarray==2025.1.0` pins against icechunk (`zarr>=3`) and the Rhiza weather-skills group (`xarray>=2026.7`). Under plain pip, the `icechunk` extra is opt-in and the `weather-skills` group cannot be installed at all.
+- **Rhiza weather-skills** (`weather-skills/*`): `uv sync --group weather-skills`. A dependency *group*, not an extra, because the three provider packages are git-pinned and PyPI rejects git URLs in published metadata. Pins live in `[tool.uv.sources]`; **moving a pin** means re-capturing `tests/fixtures/weather_skills` (`uv run python scripts/capture_weather_skills_fixtures.py`, `--real` with ECDS/Earthdata credentials) and bumping `fetch._CACHE_VERSION`, because the raw-fetch cache key cannot see the pin. Their scripts declare Python `<3.13` for `uv run --script`; acmaddl imports them instead, so 3.12-3.14 all work.
 - Extras: `geo` (shapefile/geometry regions, geotiff band descriptions), `s3`, `icechunk`, `demo` (matplotlib, cartopy, rasterio), `dev` (pytest).
 - Tests: `pytest` runs unit tests; markers `integration`, `cds`, `network` gate live-network suites.

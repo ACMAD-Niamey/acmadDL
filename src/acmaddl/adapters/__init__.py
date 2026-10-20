@@ -12,6 +12,9 @@ from .cpc_binary import CPCBinaryAdapter
 # registering it here is safe without that optional dependency installed; a
 # fetch only needs it when an icechunk-backed product is actually used.
 from .icechunk import IcechunkAdapter
+# WeatherSkillsAdapter imports the weather-skills provider packages lazily (dependency
+# group `weather-skills`); registering it is safe without them installed.
+from .weather_skills import WeatherSkillsAdapter
 
 _ADAPTERS = {
     "cds": CDSAdapter,
@@ -25,6 +28,7 @@ _ADAPTERS = {
     "ccsr": CCSRAdapter,
     "cpc_binary": CPCBinaryAdapter,
     "icechunk": IcechunkAdapter,
+    "weather_skills": WeatherSkillsAdapter,
 }
 
 

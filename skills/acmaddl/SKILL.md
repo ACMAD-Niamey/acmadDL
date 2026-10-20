@@ -174,6 +174,8 @@ The repo ships `fetch_country_shapefiles.py` under its `scripts/` directory, whi
 - **TAMSAT** (`obs/tamsat`, JASMIN public, no creds) — 0.0375° monthly precip, kept in `mm/month`, Africa land-only.
 - **GPCC gauge analyses** (`obs/gpcc-monitoring-v2020` 1982-, `obs/gpcc-first-guess` **2013**-, DWD open data, no creds) — 1° monthly gauge-only precip in `mm/month`. Gzipped NetCDF whose time axis comes from the filename (`time_from_pattern`).
 - **GPCP v2.3** (`obs/gpcp-v2-3`, NOAA NCEI, no creds) — 2.5° monthly satellite-gauge merged precip in `mm/day`, 1979-. Filenames carry a processing-date suffix resolved by a `*` against the directory listing; the sibling `-preliminary` stream is deliberately excluded.
+- **Rhiza weather-skills** (`weather-skills/*`, `uv sync --group weather-skills`) — their fetcher scripts run in-process: ECMWF S2S (`weather-skills/ecmwf-s2s`, ECDS creds) and the credential-free dynamical.org catalog (`weather-skills/ifs-ens-15d`, `weather-skills/ifs-ens-46d`, `weather-skills/gefs-35d`, `weather-skills/aifs-ens`, GFS, analyses), CHC SubC outlooks (`weather-skills/subc-mme-7d/15d/30d`), CHIRPS/IMERG daily, ERA5 (ARCO, no creds), OISST, SMAP, CMIP6. Forecasts are **one issuance per fetch** (`init="YYYY-MM-DD"`), keep member 0 (the control), carry `lead_time` as a timedelta of native steps, and have **no reforecast stream**. Observation windows clip to the skill's published latest day; no `hindcast` = trailing 10 days. Full table: [references/products.md](references/products.md).
+- **Their transforms, figures and tools on our data** — `acmaddl.weather_skills.run(skill, *inputs, **flags)` runs any non-fetcher skill in-process: transforms return acmadDL-shaped datasets (`raw=True` for theirs), figures a PNG path (`output=`), agent tools their stdout (`run("resolve-region", "Kenya")`). `to_standard_dataset`/`from_standard_dataset` are the converters (units → pint spellings; `year` axis needs `init_month=`/`lead=`; no time axis needs `init=`; monthly leads refused); `skills(kind=...)` lists what is installed with flags. `downscale`/`coarsen` and `unit-convert --to-units` fail at the pinned versions (upstream). See [references/api.md](references/api.md).
 
 **Observations are never `mm` seasonal totals.** The `mm` contract belongs to the forecast `year_index`/`assemble()` path; an obs fetch with `seasonal="mean"` returns the mean of the season's months in that entry's own units. See [references/data-conventions.md](references/data-conventions.md).
 
@@ -202,6 +204,9 @@ A product can also be *alive* and still return a corrupt field (all fill, all ze
 | `c3s/ecmwf-seas51c` | `~/.pycpt_dlauth` (IRI) | `cptdl.setup_dlauth("email")`; IRIDL sunsets ~Oct 2026 |
 | S2S MARS fallback | `~/.ecmwfapirc` | reforecast-only |
 | `nmme/*`, CHIRPS, sheerwater mirrors | none | public |
+| `weather-skills/ecmwf-s2s` | `ECMWF_DATASTORES_URL`/`KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc` | A Copernicus CDS key is refused with instructions |
+| `weather-skills/imerg-daily*`, `weather-skills/smap-daily` | Earthdata Login **token**: bare in `~/.earthdatarc`, or `EARTHDATA_TOKEN` (username/password and `.netrc` refused) | Checked before the skill runs; missing creds fail fast instead of hanging on a prompt |
+| other `weather-skills/*` | none | dynamical.org, CHC, ARCO, PSL, Pangeo are public |
 
 ## Common pitfalls (full list: [references/troubleshooting.md](references/troubleshooting.md))
 
@@ -212,6 +217,7 @@ A product can also be *alive* and still return a corrupt field (all fill, all ze
 - If nuthatch tries to reach `gs://sheerwater-datalake/...` and 401s, ambient config is shadowing acmaddl's — see troubleshooting.
 - Collapsed targeted seasonal precipitation (`year_index=True` and `assemble()`) is uniformly delivered in `mm` for NMME, C3S/CDS, and IRI sources. Lead-resolved fetches keep per-step units. CFSv2 preserves its 24 populated members; four all-NaN upstream member slots are removed.
 - Real-time model availability drifts (hindcast present, live forecast absent) — probe with `check_product(p, probe_remote=True)` before committing a multi-model roster; `assemble()` raises on the first failing model by design.
+- `weather-skills/chirps-daily` and `weather-skills/imerg-daily*` load the full global grid per day upstream; pass `months=` or a one-year `hindcast` (no `hindcast` = trailing 10 days). `weather-skills/*` products need the `weather-skills` dependency group (`WeatherSkillsNotInstalled` names the command) and are uv-only.
 
 ## Runnable examples
 

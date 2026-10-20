@@ -212,6 +212,24 @@ acmaddl cache clear [--product X] [--yes]
 
 `None` -> `(None, None)`. Shapefile/geometry input requires the `geo` extra (raises `ImportError` with a `pip install 'acmadDL[geo]'` hint). Antimeridian-crossing polygons are not special-cased — split them first.
 
+## `weather_skills` module (Rhiza skills on acmadDL data; `from acmaddl import weather_skills as ws`)
+
+```python
+ws.run(skill, *inputs, raw=False, provider=None, verbose=False, **flags) -> xr.Dataset | Path | str
+```
+Run one of Rhiza's non-fetcher skills in-process. `inputs`: xarray objects (converted with `to_standard_dataset`; converter keywords `name`, `source`, `init`, `lead`, `init_month`, `init_day` are peeled off `flags`), existing Zarr paths (passed through), or strings for positional arguments. Other keywords are the skill's flags (`to_standard=True` → `--to-standard`; lists repeat; `bbox=[lat_s, lat_n, lon_w, lon_e]` → `N/W/S/E`). Returns a dataset (transforms; `raw=True` keeps their standard dataset), a PNG `Path` (figures; `output=` is the destination, else a unique file in the temp dir), or stdout text (agent tools). Raises `ValueError` for fetchers (use `fetch`), `submit-feedback`, unknown flags (listing the valid ones), wrong input counts; `WeatherSkillError` carrying their message when the skill refuses.
+
+```python
+ws.to_standard_dataset(obj, *, name=None, source=None, init=None, lead=None, init_month=None, init_day=1, record=True) -> xr.Dataset
+ws.from_standard_dataset(ds, *, init=None) -> xr.Dataset
+```
+Outbound: ours → their standard dataset (pint-parseable units, timedelta leads, `year` → `init_time` at `init_month`/`init_day` + single `lead`, a single issuance in their fetcher layout, provenance appended unless `record=False`). Inbound: their names/units → ours, latitude ascending, forecast reshape, valid time as the 2-D `time` coord.
+
+```python
+ws.skills(kind=None) -> dict[str, SkillInfo]      # SkillInfo(name, provider, kind, version, flags)
+```
+Every skill in the installed provider packages, from their SKILL.md front matter and script source (no imports); `kind` ∈ `transforms`, `figure`, `agent-tooling`, `fetchers`.
+
 ## Adapters (internal, for debugging)
 
 Registry (`acmaddl.adapters.get_adapter(name)`): `cds`, `opendap`, `http`, `iridl`, `mars`, `ncei`, `s3`, `sheerwater`, `ccsr`, `icechunk`. All subclass `AdapterBase` with abstract `fetch_data(product_config, variable, date_range=None, region=None)`, plus `_resolve_streams` (hindcast/forecast split-stream stitching) and `health_check`. Caching happens **only** in `fetch._fetch_raw_cached`, never inside adapters.
