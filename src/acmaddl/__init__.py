@@ -9,6 +9,13 @@ Quick start:
                        target="MAM", region=[-12, 6, 28, 42], hindcast=(2010, 2015))
 """
 
+from importlib.metadata import PackageNotFoundError as _PNF, version as _version
+try:
+    __version__ = _version("acmadDL")
+except _PNF:                     # source checkout without metadata
+    __version__ = "0.0.0"
+
+
 import os as _os
 from pathlib import Path as _Path
 
