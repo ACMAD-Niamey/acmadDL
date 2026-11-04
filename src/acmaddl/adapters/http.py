@@ -4,6 +4,7 @@ import gzip
 import os
 import re
 import tempfile
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +24,12 @@ from ._robust import (
 
 
 _MAX_WORKERS = 8
+
+# netCDF-C/HDF5 is not thread-safe: two pool workers inside it at once can
+# corrupt its state and segfault the process (seen in CI on concurrent GPCP
+# opens). Downloads still run in parallel; only opening and reading a file is
+# serialised, and the data is loaded under the lock so no lazy read escapes it.
+_NETCDF_LOCK = threading.Lock()
 
 # Start day of each sub-monthly slice, so a filename's dekad/pentad index maps
 # to a real timestamp. Dekads: day 1/11/21. Pentads: day 1/6/11/16/21/26.
@@ -572,10 +579,12 @@ class HTTPAdapter(AdapterBase):
         def _do():
             with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
                 _retrieve(url, tmp.name)
-                ds = xr.open_dataset(tmp.name, decode_times=decode_times)
-                if stamp is not None:
-                    ds = _stamp_time(ds, stamp, url)
-                ds = _subset_region(ds, region)
+                with _NETCDF_LOCK:
+                    ds = xr.open_dataset(tmp.name, decode_times=decode_times)
+                    if stamp is not None:
+                        ds = _stamp_time(ds, stamp, url)
+                    ds = _subset_region(ds, region).load()
+                    ds.close()
                 os.unlink(tmp.name)
             return ds
 
