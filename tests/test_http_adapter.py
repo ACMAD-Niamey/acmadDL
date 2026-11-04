@@ -7,6 +7,8 @@ resolution, region subsetting, concatenation — is the real adapter code.
 """
 import gzip
 import shutil
+import threading
+import time
 
 import numpy as np
 import pandas as pd
@@ -384,3 +386,53 @@ def test_an_in_progress_year_with_nothing_processed_still_fails_under_allow_part
     with pytest.warns(UserWarning):
         with pytest.raises(RuntimeError, match="No data files retrieved"):
             HTTPAdapter().fetch_data(cfg, "precip", date_range=(2026, 2026))
+
+
+# ── Thread safety ────────────────────────────────────────────────────────────
+
+def test_parallel_downloads_never_open_two_netcdf_files_at_once(tmp_path, monkeypatch):
+    """netCDF-C/HDF5 is not thread-safe: concurrent opens segfaulted CI.
+
+    Downloads may overlap (that is the point of the pool); opening and reading
+    a file must not. Both are instrumented with a short sleep so that, without
+    the lock, the workers would reliably be inside open_dataset together.
+    """
+    local = _gpcc_shaped(tmp_path / "gpcc.nc", value=4.0)
+    state = {"dl": 0, "dl_max": 0, "open": 0, "open_max": 0}
+    guard = threading.Lock()
+
+    def enter(key):
+        with guard:
+            state[key] += 1
+            state[key + "_max"] = max(state[key + "_max"], state[key])
+
+    def leave(key):
+        with guard:
+            state[key] -= 1
+
+    def fake_retrieve(url, filename):
+        enter("dl")
+        time.sleep(0.05)
+        shutil.copyfile(local, filename)
+        leave("dl")
+        return filename, None
+    monkeypatch.setattr("acmaddl.adapters.http.urllib.request.urlretrieve", fake_retrieve)
+
+    real_open = xr.open_dataset
+
+    def tracked_open(*args, **kwargs):
+        enter("open")
+        time.sleep(0.05)
+        try:
+            return real_open(*args, **kwargs)
+        finally:
+            leave("open")
+    monkeypatch.setattr("acmaddl.adapters.http.xr.open_dataset", tracked_open)
+
+    cfg = _config(file_pattern="{year}/gpcc_{year}_{month:02d}.nc",
+                  init_months=[1, 2, 3, 4], max_workers=4)
+    out = HTTPAdapter().fetch_data(cfg, "precip", date_range=(2024, 2024))
+
+    assert out.sizes["time"] == 4
+    assert state["open_max"] == 1
+    assert state["dl_max"] > 1

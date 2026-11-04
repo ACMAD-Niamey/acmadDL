@@ -136,7 +136,7 @@ weather-skills = [
     { name = "pint-xarray", specifier = ">=0.6" },
     { name = "shapely", specifier = ">=2.1" },
     { name = "weather-skills", git = "https://github.com/rhiza-research/weather-skills?rev=4f95364b323e601f5cbd43ee3af39d2d77617596" },
-    { name = "weather-skills-core", git = "https://github.com/rhiza-research/weather-skills-core?rev=e118b9531181224cb1459efbd9f2b114117f0a79" },
+    { name = "weather-skills-core", git = "https://github.com/weather-skills/weather-skills-core?rev=e118b9531181224cb1459efbd9f2b114117f0a79" },
     { name = "xarray-regrid" },
 ]
 
@@ -5515,7 +5515,7 @@ dependencies = [
 [[package]]
 name = "weather-skills-core"
 version = "0.1.0"
-source = { git = "https://github.com/rhiza-research/weather-skills-core?rev=e118b9531181224cb1459efbd9f2b114117f0a79#e118b9531181224cb1459efbd9f2b114117f0a79" }
+source = { git = "https://github.com/weather-skills/weather-skills-core?rev=e118b9531181224cb1459efbd9f2b114117f0a79#e118b9531181224cb1459efbd9f2b114117f0a79" }
 dependencies = [
     { name = "cf-xarray" },
     { name = "cftime" },
