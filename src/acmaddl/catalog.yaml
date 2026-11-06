@@ -817,7 +817,7 @@ c3s/ukmo-daily:
 # --- Native UCSB CHIRPS v2.0 (0.05°) ---
 obs/chirps-v2-monthly:
   adapter: http
-  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_monthly/cogs/"
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_monthly/cogs/"
   file_pattern: "chirps-v2.0.{year}.{month:02d}.cog"
   format: cog
   request_interval: 3.0   # COG range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
@@ -840,7 +840,7 @@ obs/chirps-v2-monthly:
 
 obs/chirps-v2-daily:
   adapter: http
-  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/netcdf/p05/"
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_daily/netcdf/p05/"
   file_pattern: "chirps-v2.0.{year}.days_p05.nc"
   format: netcdf
   request_interval: 1.0   # whole-file pulls: light pacing
@@ -860,7 +860,7 @@ obs/chirps-v2-daily:
 
 obs/chirps-v2-pentad:
   adapter: http
-  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_pentad/netcdf/"
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_pentad/netcdf/"
   file_pattern: "chirps-v2.0.{year}.pentads.nc"
   format: netcdf
   request_interval: 1.0   # whole-file pulls: light pacing
@@ -880,7 +880,7 @@ obs/chirps-v2-pentad:
 
 obs/chirps-v2-dekad:
   adapter: http
-  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_dekad/netcdf/"
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_dekad/netcdf/"
   file_pattern: "chirps-v2.0.{year}.dekads.nc"
   format: netcdf
   request_interval: 1.0   # whole-file pulls: light pacing
@@ -900,7 +900,7 @@ obs/chirps-v2-dekad:
 
 obs/chirps-v2-annual:
   adapter: http
-  source_url: "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_annual/tifs/"
+  source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_annual/tifs/"
   file_pattern: "chirps-v2.0.{year}.tif"
   format: tif
   request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
