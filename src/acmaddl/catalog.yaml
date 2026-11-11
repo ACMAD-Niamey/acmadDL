@@ -453,7 +453,7 @@ c3s/ukmo:
   adapter: cds
   cds_dataset: "seasonal-monthly-single-levels"
   cds_model: "ukmo"
-  system: "604"
+  system: "610"   # GloSea6-GC5.1, nominal starts from Apr 2026 (604 = Mar 2025-Feb 2026, 605 = Mar 2026 only)
   product_type: "monthly_mean"
   leadtime_month: [1, 2, 3, 4, 5, 6]
   variables:
@@ -477,7 +477,7 @@ c3s/ukmo:
     forecast_members: 62   # GloSea6 lagged ensemble — verified live (2025-06 forecast: ~2/day x month)
     hindcast_members: 28   # verified live — monthly product aggregates the lagged burst ensemble
     hindcast_range: [1993, 2016]
-    forecast_range: [2025, 2026]   # RETIRED — GloSea6 sys 604 window Mar2025-Feb2026; renumbered to 605
+    forecast_range: [2026, 2027]   # system 610 window from Apr 2026; hindcast 1993-2016
 
 c3s/jma:
   adapter: cds
@@ -761,7 +761,7 @@ c3s/ukmo-daily:
   adapter: cds
   cds_dataset: "seasonal-original-single-levels"
   cds_model: "ukmo"
-  system: "604"
+  system: "610"   # GloSea6-GC5.1, nominal starts from Apr 2026
   variables:
     precip:
       native_name: total_precipitation
@@ -784,7 +784,7 @@ c3s/ukmo-daily:
     forecast_members: 7    # GloSea6 daily product: per-start ensemble (unverified — not probed)
     hindcast_members: 7
     hindcast_range: [1993, 2016]
-    forecast_range: [2025, 2026]   # RETIRED — GloSea6 sys 604 window Mar2025-Feb2026; renumbered to 605
+    forecast_range: [2026, 2027]   # system 610 window from Apr 2026; hindcast 1993-2016
 
 # ---------------------------------------------------------------------------
 # CHIRPS (UCSB Climate Hazards Center precipitation)
