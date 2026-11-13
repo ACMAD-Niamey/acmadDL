@@ -2,8 +2,8 @@
 
 CHIRPS-GEFS products carry an `issuance` catalog block: they are addressed by
 issuance DATE, not by season. No credentials, but they live on CHC's UCSB server
-behind CrowdSec — the catalog pins request_interval: 3.0 (a 4-hour IP ban waits
-above ~2 req/s).
+which blocks an address for hours above ~2 requests/second — the catalog pins
+request_interval: 3.0, applied to every HTTP request.
 """
 
 from acmaddl import fetch

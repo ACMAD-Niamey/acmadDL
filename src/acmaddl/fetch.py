@@ -257,14 +257,20 @@ def fetch(product, variable, init=None, target=None, region=None,
     retry_backoff * 2**attempt seconds with jitter. Set max_retries=0 to
     disable. Currently honoured by the HTTP adapter.
 
-    request_interval: minimum seconds between successive file opens (shared
-    across worker threads). Use this to stay under a server's
-    requests-per-second budget. Default 0 = no pacing. Currently honoured by
-    the HTTP adapter. A product may declare its own request_interval (and a
-    max_workers concurrency cap) in the catalog as a safety floor; this kwarg
-    can raise that floor but not lower it. The native CHIRPS entries set one so
-    bulk pulls stay under the UCSB CrowdSec rate ban — raise it further for
-    large regional domains (rule of thumb: range-reads-per-file / 2 seconds).
+    request_interval: minimum seconds between successive HTTP requests of the
+    pull (shared across worker threads). For whole-file downloads that is one
+    request per file; for range-read rasters (COG / GeoTIFF) every individual
+    range request is spaced, so a file costs a few intervals. Use this to stay
+    under a server's requests-per-second budget. Default 0 = no pacing.
+    Currently honoured by the HTTP adapter. A product may declare its own
+    request_interval (and a max_workers concurrency cap) in the catalog as a
+    safety floor; this kwarg can raise that floor but not lower it. The native
+    CHIRPS entries set 1.0 (NetCDF) or 3.0 (COG / GeoTIFF): the UCSB server
+    blocks an address that keeps exceeding about 2 requests/second and asks
+    for about 1. A brief HTTP 429 is waited out and retried a few times at a
+    slower pace. If the server blocks the address (HTTP 403, a 429 that
+    persists or reports a block) or stops answering, the pull raises
+    ServerBlockedError, without further retries, even with allow_partial.
 
     reforecast: when True, fetch the reforecast (hindcast) suite associated
     with the given issuance instead of the forecast itself. Currently

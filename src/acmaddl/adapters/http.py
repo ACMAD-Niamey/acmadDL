@@ -1,3 +1,4 @@
+import contextvars
 import fnmatch
 import warnings
 import gzip
@@ -6,6 +7,7 @@ import re
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -19,11 +21,23 @@ from ._robust import (
     _DEFAULT_MAX_RETRIES,
     _DEFAULT_RETRY_BACKOFF,
     _RateLimiter,
+    ServerBlockedError,
+    ServerUnreachableError,
     _with_retry,
+    refusal_wait,
 )
+from ._range import RangeStore
 
 
 _MAX_WORKERS = 8
+
+# The limiter of the pull in progress, for code that sends HTTP requests below
+# the per-file loop (the raster range reader). Set by HTTPAdapter.fetch_data.
+_REQUEST_LIMITER = contextvars.ContextVar("acmaddl_http_request_limiter", default=None)
+
+# A blocked address can show up as silence rather than an error status. After
+# this many files in a row get no answer, stop instead of knocking for hours.
+_MAX_UNANSWERED_FILES = 2
 
 # netCDF-C/HDF5 is not thread-safe: two pool workers inside it at once can
 # corrupt its state and segfault the process (seen in CI on concurrent GPCP
@@ -194,7 +208,7 @@ def _subset_region(ds, region):
 
 
 def _open_raster(url, region, variable=None, fill_value=None):
-    """Open a COG via HTTP range reads, subsetting to region without downloading the whole file.
+    """Open a COG via paced HTTP range reads, subsetting to region without downloading the whole file.
 
     Returns a 2-D ``(latitude, longitude)`` dataset carrying no time coordinate:
     the caller decides what time the raster represents. `_open_cog_subset`
@@ -205,16 +219,52 @@ def _open_raster(url, region, variable=None, fill_value=None):
     declaring it in the TIFF nodata tag — rasterio then passes it through as data.
     If `fill_value` is provided, mask those cells as NaN before returning.
 
-    GDAL caches vsicurl responses (including transient HTTP errors) keyed by
-    URL at the process level. That cache replays a previous 503 on retry, so
-    we disable it for the open via CPL_VSIL_CURL_NON_CACHED. Cost is a few
-    extra range reads per file; benefit is that the adapter's retry loop
-    actually re-hits the server instead of looping on a cached failure.
+    A remote file is read through :class:`RangeStore`, not GDAL's
+    ``/vsicurl/``: vsicurl sends ~60 unpaceable requests per open (a directory
+    listing and dozens of probes for sidecar files that do not exist), which is
+    what gets an address blocked by the CHC server. Here every request is sent
+    by acmadDL, one at a time, each after waiting on the pull's rate limiter
+    (``request_interval``): typically the header plus one request per row of
+    tiles the region touches. A fresh reader per call also means a retry
+    re-reads the server rather than replaying a cached failure.
     """
     import rasterio
     import rioxarray  # noqa: F401
-    with rasterio.Env(CPL_VSIL_CURL_NON_CACHED="/vsicurl/"):
+    if not re.match(r"https?://", str(url)):
+        # Local path: nothing to pace.
         ds = xr.open_dataset(url, engine="rasterio")
+        return _finish_raster(ds, region, variable, fill_value)
+    store = RangeStore(str(url), limiter=_REQUEST_LIMITER.get())
+    store.connect()     # header + size, outside GDAL, so 404 / 403 / timeouts raise cleanly
+    try:
+        # EMPTY_DIR: GDAL must not look for sibling/sidecar files at all.
+        with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+            with rasterio.open(str(url), opener=store.opener) as src:
+                ds = xr.open_dataset(src, engine="rasterio")
+                ds = _finish_raster(ds, region, variable, fill_value)
+        if store.error is not None:
+            raise store.error      # a read failed but GDAL carried on
+        return ds
+    except Exception as exc:
+        # GDAL reports a failed read as its own error; surface what the reader hit.
+        cause = store.error or _network_cause(exc)
+        if cause is not None and cause is not exc:
+            raise cause from exc
+        raise
+
+
+def _network_cause(exc):
+    """The ServerBlockedError / ServerUnreachableError behind ``exc``, if any."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, (ServerBlockedError, ServerUnreachableError)):
+            return exc
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def _finish_raster(ds, region, variable, fill_value):
     if region:
         lat_s, lat_n, lon_w, lon_e = region
         buf = 1.0
@@ -248,7 +298,22 @@ def _retrieve(url, dest):
     than a catalog knob: a ``.gz`` URL is unambiguous, and a product whose
     files are gzipped upstream has no reason to declare it twice.
     """
-    urllib.request.urlretrieve(url, dest)
+    attempt = 0
+    while True:
+        try:
+            urllib.request.urlretrieve(url, dest)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (403, 429):
+                raise
+            # Raises ServerBlockedError unless this is a brief, retryable 429.
+            wait = refusal_wait(url, exc, attempt)
+            limiter = _REQUEST_LIMITER.get()
+            if limiter is not None:
+                limiter.slow_down()
+            print(f"[acmaddl] HTTP 429 from {url}: waiting {wait:.0f}s")
+            time.sleep(wait)
+            attempt += 1
     if url.endswith(".gz"):
         with gzip.open(dest, "rb") as fh:
             payload = fh.read()
@@ -317,6 +382,35 @@ def _open_cog_subset(url, region, variable=None, fill_value=None, timestamp=None
     return ds
 
 
+class _Skipped(RuntimeError):
+    """A download not attempted because the server had already refused another."""
+
+
+class _Unanswered:
+    """Counts files in a row that got no answer from the server at all.
+
+    A blocked address is not always told so: the CHC server may simply stop
+    answering. Working through the rest of a long file list against a silent
+    server is hours of further requests, so after ``_MAX_UNANSWERED_FILES`` in
+    a row the pull stops with a :class:`ServerBlockedError`.
+    """
+
+    def __init__(self):
+        self.count = 0
+
+    def reset(self):
+        self.count = 0
+
+    def note(self, url, exc):
+        if not isinstance(exc, ServerUnreachableError):
+            self.count = 0
+            return
+        self.count += 1
+        if self.count >= _MAX_UNANSWERED_FILES:
+            raise ServerBlockedError(
+                url, f"No answer for {self.count} files in a row") from exc
+
+
 class HTTPAdapter(AdapterBase):
     def health_check(self, product_config, probe_remote=False):
         url = product_config.get("source_url")
@@ -363,6 +457,35 @@ class HTTPAdapter(AdapterBase):
             }
 
     def fetch_data(self, product_config, variable, date_range=None, region=None):
+        """Fetch a product; see ``_fetch_data`` for the work.
+
+        Publishes this pull's rate limiter for the raster range reader, so
+        ``request_interval`` spaces individual HTTP requests, not just files.
+        """
+        limiter = _RateLimiter(self._resolve_request_interval(product_config))
+        token = _REQUEST_LIMITER.set(limiter)
+        try:
+            return self._fetch_data(product_config, variable, limiter,
+                                    date_range=date_range, region=region)
+        finally:
+            _REQUEST_LIMITER.reset(token)
+
+    @staticmethod
+    def _resolve_request_interval(product_config):
+        # request_interval is resolved as a *floor*: a per-product catalog value
+        # (plain "request_interval") sets a safe minimum pace that a caller's
+        # fetch(request_interval=...) — injected here as "_request_interval" —
+        # may raise but not silently undercut. Native CHIRPS entries declare one
+        # so pulls stay under the UCSB rate block (~2 req/s).
+        _caller_interval = product_config.get("_request_interval")
+        _catalog_interval = product_config.get("request_interval")
+        return max(
+            float(_caller_interval) if _caller_interval is not None else 0.0,
+            float(_catalog_interval) if _catalog_interval is not None else 0.0,
+        )
+
+    def _fetch_data(self, product_config, variable, rate_limiter, date_range=None,
+                    region=None):
         verbose = product_config.get("_verbose", True)
         progress = product_config.get("_progress", True)
         # Strict by default: any per-file fetch error aborts the whole pull.
@@ -373,18 +496,7 @@ class HTTPAdapter(AdapterBase):
         allow_partial = product_config.get("_allow_partial", False)
         max_retries = int(product_config.get("_max_retries", _DEFAULT_MAX_RETRIES))
         retry_backoff = float(product_config.get("_retry_backoff", _DEFAULT_RETRY_BACKOFF))
-        # request_interval is resolved as a *floor*: a per-product catalog value
-        # (plain "request_interval") sets a safe minimum pace that a caller's
-        # fetch(request_interval=...) — injected here as "_request_interval" —
-        # may raise but not silently undercut. Native CHIRPS entries declare one
-        # so multi-file pulls stay under the UCSB CrowdSec rate ban (~2 req/s).
-        _caller_interval = product_config.get("_request_interval")
-        _catalog_interval = product_config.get("request_interval")
-        request_interval = max(
-            float(_caller_interval) if _caller_interval is not None else 0.0,
-            float(_catalog_interval) if _catalog_interval is not None else 0.0,
-        )
-        rate_limiter = _RateLimiter(request_interval)
+        request_interval = rate_limiter.min_interval
         base_url = product_config["source_url"]
         fmt = product_config.get("format", "netcdf")
 
@@ -426,6 +538,7 @@ class HTTPAdapter(AdapterBase):
             fill_value = var_cfg.get("fill_value")
             datasets = []
             failures = []
+            unanswered = _Unanswered()
             for url, ts in _iter(list(zip(urls, stamps)), "acmadDL HTTP download",
                                  enabled=progress):
                 rate_limiter.wait()
@@ -438,7 +551,11 @@ class HTTPAdapter(AdapterBase):
                         label=f"COG open {url}", verbose=verbose,
                     )
                     datasets.append(ds)
+                    unanswered.reset()
+                except ServerBlockedError:
+                    raise          # even with allow_partial: stop adding traffic
                 except Exception as e:
+                    unanswered.note(url, e)
                     failures.append((url, e))
                     print(f"Error fetching {url}: {e}")
         else:
@@ -491,6 +608,7 @@ class HTTPAdapter(AdapterBase):
                   f"format={fmt}, request_interval={rate_limiter.min_interval}s)")
 
         opened, failures = {}, []
+        unanswered = _Unanswered()
         for handle in _iter(files, "acmadDL issuance download", enabled=progress):
             rate_limiter.wait()
             try:
@@ -501,7 +619,11 @@ class HTTPAdapter(AdapterBase):
                     max_retries, retry_backoff,
                     label=f"issuance open {handle.url}", verbose=verbose,
                 )
+                unanswered.reset()
+            except ServerBlockedError:
+                raise              # even with allow_partial: stop adding traffic
             except Exception as e:
+                unanswered.note(handle.url, e)
                 failures.append((handle.url, e))
                 print(f"Error fetching {handle.url}: {e}")
 
@@ -600,17 +722,31 @@ class HTTPAdapter(AdapterBase):
         results = {}
         errors = []
         stamps = [None] * len(urls) if stamps is None else stamps
+        # Set by the first worker the server refuses; workers that have not
+        # sent their request yet then skip it, so a block costs one request.
+        blocked = threading.Event()
+
+        def _one(u, st):
+            if blocked.is_set():
+                raise _Skipped(u)
+            try:
+                return self._download_one(u, region, rate_limiter, max_retries,
+                                          retry_backoff, verbose, stamp=st,
+                                          decode_times=decode_times)
+            except ServerBlockedError:
+                blocked.set()
+                raise
+
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(self._download_one, u, region,
-                            rate_limiter, max_retries, retry_backoff, verbose,
-                            stamp=st, decode_times=decode_times): u
-                for u, st in zip(urls, stamps)
-            }
+            futures = {pool.submit(_one, u, st): u for u, st in zip(urls, stamps)}
             for fut in _iter(as_completed(futures), "acmadDL HTTP download", enabled=progress):
                 try:
                     url, ds = fut.result()
                     results[url] = ds
+                except ServerBlockedError:
+                    # Stop adding traffic: drop everything not yet started.
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
                 except Exception as e:
                     errors.append((futures[fut], e))
                     print(f"Error fetching {futures[fut]}: {e}")

@@ -69,7 +69,7 @@ All precip-only, 0.05°, `fill_value: -9999`:
 
 `obs/chirps-v3-dekad-tif` and `-prelim` are 0.05° calendar-dekad GeoTIFF streams (`request_interval: 3.0`, `fill_value: -9999`, precip in `mm` per 10-day dekad). The tif stream is the completed, gauge-corrected archive; the prelim stream fills the current-season tail before the final product catches up. Splice prelim onto the tif stream (prelim for the trailing dekads, tif for everything settled) for a continuous near-real-time record.
 
-`data.chc.ucsb.edu` sits behind CrowdSec: exceeding ~2 req/s earns a **4-hour IP ban** (HTTP 403 "CrowdSec Ban"). The catalog sets `request_interval` floors (3.0 s for COG/TIF, 1.0 s for NetCDF) and `max_workers: 2` caps; for large/continental pulls raise `request_interval` further (rule of thumb: range-reads-per-file / 2 seconds). Native pentad/dekad/annual keep `mm` totals rather than `mm/day`.
+`data.chc.ucsb.edu` enforces two per-IP limits, published in CHC's own downloader ([chc-ucsb/chc-data-download](https://github.com/chc-ucsb/chc-data-download), "Downloading Politely"): clients that keep sending more than **about 2 requests/second** (directory listings included) are **blocked for several hours**, and more than 20 open connections get HTTP 429. CHC asks for about 1 request/second in total, from one connection. The limits count everything behind the same public IP. The catalog sets `request_interval: 3.0` on the COG/TIF entries, and `1.0` with `max_workers: 2` on the NetCDF ones. For COG/TIF the interval spaces each range request (acmadDL reads these with its own paced reader, a few requests per file, not GDAL's `/vsicurl/`, which sent ~60 unpaced requests per file). The server also sends plain HTTP 429s well below the published rate (seen 2026-11-12 at spacings from 1 s to 30 s, cause unknown); acmadDL waits each one out (15, 30, 60 s) and carries on at up to one request per 10 s, so a pull can take much longer than the file count suggests. A 403, a persistent 429 or no answer raises `ServerBlockedError` and stops the pull. Native pentad/dekad/annual keep `mm` totals rather than `mm/day`.
 
 ## Rhiza / Sheerwater mirrors (`sheerwater` adapter, public GCS Zarr, 0.25°) — no credentials
 
@@ -144,7 +144,7 @@ These carry an `issuance` catalog block: they are keyed by an issuance date, not
 | `chc/chirps-gefs-daily` | precip mm/day | 0.05° daily | 16 daily leads (`leads: [0, 15]`, lead 0 = issuance day) | hindcast 2001-2019, forecast 2021-present — **2020 absent** | CHIRPS3-GEFS daily precip forecast, issued daily. Aggregate to dekads/pentads downstream rather than fetching CHC's separately-keyed dekad product. |
 | `chc/chirps-gefs-15day` | precip mm | 0.05°, 15-day accumulation | single lead (`leads: [0, 0]`) | hindcast 2001-2019, forecast 2021-present | One accumulated 15-day total per issuance. **GOTCHA:** `valid_time` marks the window's **start** (the [init, init+15d) window), not its end. |
 
-Both share the CHC CrowdSec constraint (`request_interval: 3.0`, 4-hour IP ban above ~2 req/s). The 2001-2019 window is the GEFSv12 reforecast era.
+Both share the CHC rate limit (`request_interval: 3.0`; blocked for hours above ~2 req/s). The 2001-2019 window is the GEFSv12 reforecast era.
 
 ## Weather skills (`weather-skills/*`, `weather-skills` adapter) — `uv sync --group weather-skills`
 

@@ -210,7 +210,7 @@ A product can also be *alive* and still return a corrupt field (all fill, all ze
 
 ## Common pitfalls (full list: [references/troubleshooting.md](references/troubleshooting.md))
 
-- CHIRPS at UCSB rate-limits hard (4-hour IP ban above ~2 req/s) — catalog sets `request_interval` floors; for routine daily data prefer `obs/chirps-v3-daily-rhiza` (0.25°, public GCS) over native `obs/chirps-v3-daily` (~23.5 GiB/file).
+- CHIRPS at UCSB rate-limits hard (blocked for hours above ~2 req/s; CHC asks for ~1) — catalog sets `request_interval` floors (3.0 for COG/TIF, 1.0 for NetCDF) that space every HTTP request; a brief HTTP 429 is waited out and retried, and a block stops the pull (`ServerBlockedError`); for routine daily data prefer `obs/chirps-v3-daily-rhiza` (0.25°, public GCS) over native `obs/chirps-v3-daily` (~23.5 GiB/file).
 - `allow_partial=False` (default) raises if any file in a multi-file fetch fails; pass `allow_partial=True` for best-effort.
 - Deprecated products emit `DeprecationWarning` and alias to successors — check `catalog.info(p)["deprecated"]`.
 - S3 adapter shells out to the AWS **CLI**, not boto3 — `aws` must be configured.

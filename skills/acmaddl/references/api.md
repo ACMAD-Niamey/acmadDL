@@ -33,7 +33,7 @@ def fetch(product, variable, init=None, target=None, region=None,
 | `allow_partial` | bool = False | Multi-file adapters: `False` raises `RuntimeError` on any file failure; `True` returns what succeeded. |
 | `max_retries` | int = 3 | Transient-failure retries (HTTP, OPeNDAP, CCSR adapters). |
 | `retry_backoff` | float = 1.0 | Backoff multiplier between retries. |
-| `request_interval` | float = 0.0 | Seconds between requests. This is a **floor** — a per-product catalog value can raise it, a caller cannot undercut it. |
+| `request_interval` | float = 0.0 | Seconds between HTTP requests (each range read of a COG/TIF counts, not just each file). This is a **floor** — a per-product catalog value can raise it, a caller cannot undercut it. |
 | `reforecast` | bool = False | Fetch the on-the-fly hindcast suite (S2S: switches to the `s2s-reforecasts` collection). |
 | `boundary` | `"center"` (default) \| `"cover"` | `"center"`: keep cells whose centre is inside the region (xarray/CDO convention). `"cover"`: keep every cell the region touches (`all_touched=True`). |
 | `region_buffer` | float = 1.5 (degrees) | Only used with `boundary="cover"`; pads the fetched bbox so edge cells aren't clipped. Must exceed half the grid spacing. |
