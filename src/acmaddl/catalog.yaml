@@ -800,16 +800,30 @@ c3s/ukmo-daily:
 # Sub-monthly native cadences are one NetCDF per year, fetched whole then
 # cropped (no server-side subsetting), so they are bandwidth-heavy.
 #
-# Throttling: data.chc.ucsb.edu sits behind nginx + CrowdSec, which bans an IP
-# for 4 hours (HTTP 403, "CrowdSec Ban") once it exceeds ~2 requests/sec to
-# non-static files (leaky bucket: capacity 40, leak 2/s). There is no published
-# UCSB rate limit and robots.txt disallows crawling, so that scenario is the
-# real ceiling. Each native entry therefore declares a request_interval floor
-# (seconds between file opens; callers may pass a larger fetch(request_interval=)
-# but cannot go below it). COG/TIF do several HTTP range reads per file, so they
-# pace harder than the whole-file NetCDFs. Rule of thumb for a bulk regional
-# pull: keep (range-reads-per-file / request_interval) under 2 — i.e. raise
-# request_interval for large/continental domains (≈ tiles_per_file / 2 seconds).
+# Throttling: CHC publishes two per-IP limits (README of the official downloader,
+# github.com/chc-ucsb/chc-data-download, "Downloading Politely"):
+#   - request rate: clients that keep sending more than about 2 requests/second,
+#     directory listings included, are blocked automatically for several hours;
+#   - connections: more than 20 open at once get HTTP 429.
+# CHC's advice is to stay at about 1 request/second in total, from one
+# connection, and after a block (HTTP 429 or 403, or repeated timeouts) to stop
+# everything from that address and wait a few hours. The limits count every
+# process and machine behind the same public IP.
+# Each native entry therefore declares a request_interval, a floor on the
+# seconds between HTTP requests (callers may pass a larger
+# fetch(request_interval=) but cannot go below it): 3.0 for the COG/TIF
+# entries, 1.0 for the whole-file NetCDF ones. For COG/TIF this spaces every
+# individual range read, not just files: a regional window costs the header
+# plus about one request per row of tiles.
+# Observed 2026-11-12, from one address that had been blocked earlier that
+# week: the server also answers plain HTTP 429 well below the published rate.
+# At 1 s spacing a 429 came within a few requests; a 72-file monthly pull drew
+# 43 of them at spacings from 5 s up to 30 s, about as often at 30 s as at 5 s.
+# Each cleared on a retry 15-60 s later and no block followed. The cause is not
+# known (not documented by CHC). So a plain 429 is waited out and retried up to
+# three times, with the pace halved to at most one request per 10 s; a 403, a
+# 429 that reports a block, a 429 that persists, or two files running with no
+# answer stops the pull at once (ServerBlockedError), never retried.
 # The NetCDF cadences also cap concurrent connections via max_workers, since one
 # pull can open several multi-GiB downloads at once (v3-daily is ~23.5 GiB/file).
 # ---------------------------------------------------------------------------
@@ -820,7 +834,7 @@ obs/chirps-v2-monthly:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_monthly/cogs/"
   file_pattern: "chirps-v2.0.{year}.{month:02d}.cog"
   format: cog
-  request_interval: 3.0   # COG range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -903,7 +917,7 @@ obs/chirps-v2-annual:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v2.0/global_annual/tifs/"
   file_pattern: "chirps-v2.0.{year}.tif"
   format: tif
-  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -923,7 +937,7 @@ obs/chirps-v3-monthly:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/monthly/global/cogs/"
   file_pattern: "chirps-v3.0.{year}.{month:02d}.cog"
   format: cog
-  request_interval: 3.0   # COG range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -945,7 +959,7 @@ obs/chirps-v3-monthly-prelim:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/prelim/monthly/global/tifs/"
   file_pattern: "chirps-v3.0.{year}.{month:02d}.tif"
   format: tif
-  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -1030,7 +1044,7 @@ obs/chirps-v3-dekad-tif:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/dekads/global/tifs/"
   file_pattern: "chirps-v3.0.{year}.{month:02d}.{dekad}.tif"
   format: tif
-  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -1052,7 +1066,7 @@ obs/chirps-v3-dekad-prelim:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/prelim/dekads/global/tifs/"
   file_pattern: "chirps-v3.0.{year}.{month:02d}.{dekad}.tif"
   format: tif
-  request_interval: 3.0
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -1071,7 +1085,7 @@ obs/chirps-v3-annual:
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/annual/global/tifs/"
   file_pattern: "chirps-v3.0.{year}.tif"
   format: tif
-  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   variables:
     precip:
       native_name: precip
@@ -1264,7 +1278,7 @@ chc/chirps-gefs-daily:
   adapter: http
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS-GEFS/v3/daily/global/"
   format: tif
-  request_interval: 3.0   # TIF range reads; floor keeps bulk pulls under CrowdSec ~2 req/s
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   issuance:
     # Directory = issuance date, filename = valid date. Lead 0 is the issuance
     # day itself, so a "15-day forecast" spans leads 0-14; the archive carries
@@ -1295,7 +1309,7 @@ chc/chirps-gefs-15day:
   adapter: http
   source_url: "https://data.chc.ucsb.edu/products/CHIRPS-GEFS/v3/15_day/global/data/"
   format: tif
-  request_interval: 3.0
+  request_interval: 3.0   # seconds between HTTP requests; 1 s spacing drew HTTP 429 (see CHIRPS notes)
   issuance:
     # One accumulated 15-day total per issuance: no lead dimension, and the
     # filename carries the init date rather than a valid date.

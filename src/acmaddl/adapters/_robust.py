@@ -35,6 +35,101 @@ class _RateLimiter:
                 time.sleep(self.min_interval - elapsed)
             self._last = time.monotonic()
 
+    def slow_down(self, factor=2.0, floor=1.0, cap=10.0):
+        """Lengthen the interval for the rest of the pull; returns the new value.
+
+        Called when the server answers 429. The interval doubles, up to ``cap``
+        seconds, and is never shortened (an interval already above ``cap``
+        stays). The cap is low on purpose: against data.chc.ucsb.edu
+        (2026-11-12) 429s arrived just as often at one request per 30 s as at
+        one per 5 s, so slowing further only cost hours.
+        """
+        with self._lock:
+            slower = min(cap, max(floor, self.min_interval * factor))
+            self.min_interval = max(self.min_interval, slower)
+            return self.min_interval
+
+
+class ServerBlockedError(RuntimeError):
+    """The server is refusing this address (HTTP 403 / 429, or it stopped answering).
+
+    Never retried, and it aborts a multi-file pull at once: every further
+    request to a server that has blocked us only adds to the traffic that
+    caused the block (and can extend it).
+    """
+
+    def __init__(self, url, reason, server_message=""):
+        super().__init__(
+            f"{reason} from {url}: the server is limiting or blocking requests from "
+            f"this address. Stopped without retrying. Stop every other download to "
+            f"this server from this network and wait a few hours before trying again; "
+            f"do not rerun straight away."
+            + (f" Server message: {server_message}" if server_message else "")
+        )
+        self.url = url
+        self.server_message = server_message
+
+
+# A plain 429 is the server's rate signal, not (yet) a block: CHC's own
+# downloader retries "a brief 429 a few times". So a 429 is retried after a
+# wait, at most this many times per request, and the pull's pace is halved each
+# time up to a cap (see _RateLimiter.slow_down), unless the body says the
+# address has been blocked. A 403 is never retried. Measured against
+# data.chc.ucsb.edu (2026-11-12): waits of 2-8 s did not clear a 429, hence the
+# longer ones; in a 72-file pull, 43 plain 429s all cleared within these waits
+# and no block followed.
+_MAX_429_RETRIES = 3
+_429_WAITS = (15.0, 30.0, 60.0)
+_BLOCK_MARKERS = ("bulk download", "crowdsec", "banned", "blocked")
+
+
+def _error_text(exc):
+    """Short plain-text body of an HTTPError (may be empty)."""
+    try:
+        text = exc.read(2000).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    return " ".join(re.sub(r"<[^>]+>", " ", text).split())[:200]
+
+
+def refusal_wait(url, exc, attempt):
+    """Decide what an HTTP 403 / 429 means.
+
+    Returns the seconds to wait before retrying a brief 429 (``Retry-After`` if
+    the server sent one, else 15, 30, 60, plus jitter). Raises
+    :class:`ServerBlockedError` for a 403, for a 429 whose body reports a
+    block, and once ``attempt`` (0-based) reaches ``_MAX_429_RETRIES``.
+    """
+    message = _error_text(exc)
+    blocked = any(marker in message.lower() for marker in _BLOCK_MARKERS)
+    if exc.code != 429 or blocked or attempt >= _MAX_429_RETRIES:
+        reason = f"HTTP Error {exc.code}"
+        if exc.code == 429 and not blocked:
+            reason += f" (still refused after {attempt} paced retries)"
+        raise ServerBlockedError(url, reason, message) from exc
+    wait = None
+    try:
+        wait = float((exc.headers or {}).get("Retry-After"))
+    except (TypeError, ValueError):
+        pass
+    if wait is None or wait < 0:
+        wait = _429_WAITS[min(attempt, len(_429_WAITS) - 1)]
+    return wait + random.random()
+
+
+class ServerUnreachableError(OSError):
+    """A request got no answer at all (timeout, refused or dropped connection)."""
+
+
+def user_agent():
+    """Identify acmadDL to the servers it downloads from."""
+    try:
+        from importlib.metadata import version
+        ver = version("acmadDL")
+    except Exception:
+        ver = "unknown"
+    return f"acmadDL/{ver} (+https://github.com/ACMAD-Niamey/acmadDL)"
+
 
 # HTTP 4xx ("client error") responses indicate a problem with our request
 # (URL doesn't exist, unauthorized, etc.) and won't fix themselves on retry.
@@ -53,6 +148,8 @@ def _is_transient(exc):
     pattern is considered transient — this covers ``OSError`` (netcdf I/O
     failure), ``TimeoutError``, and server-side 5xx errors alike.
     """
+    if isinstance(exc, ServerBlockedError):
+        return False
     msg = str(exc)
     for pat in _PERMANENT_HTTP_PATTERNS:
         if pat.search(msg):

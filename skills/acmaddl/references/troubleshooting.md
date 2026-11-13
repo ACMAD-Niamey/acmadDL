@@ -36,7 +36,7 @@ The s3 adapter shells out to the **AWS CLI** (`aws s3 ls/cp`) — configure `aws
 | Symptom | Cause / fix |
 |---|---|
 | 403 from CDS naming a dataset | Licence not accepted — accept it in the CDS web UI |
-| HTTP 403 "CrowdSec Ban" from data.chc.ucsb.edu | CHIRPS rate limit tripped; IP banned ~4 h. Raise `request_interval`, reduce parallelism, or switch to `obs/chirps-*-rhiza` mirrors |
+| `ServerBlockedError` (HTTP 403 / 429, "Automated bulk download detected", or no answer) from data.chc.ucsb.edu | The address is blocked (CHC blocks above ~2 requests/second). acmadDL has already waited out any brief 429 three times; it stops and does not retry further. Stop every download to CHC from this network (other scripts and machines share the IP) and wait a few hours; do not rerun straight away. Or switch to the `obs/chirps-*-rhiza` mirrors |
 | `RuntimeError: N/M file(s) failed; refusing to return partial data` | Default `allow_partial=False`; pass `allow_partial=True` for best-effort, or retry |
 | `ValueError` on `region=` | Product is non-gridded (no lat/lon dims) — spatial subset impossible |
 | `ImportError` mentioning `acmadDL[geo]` | Shapefile/geometry region needs the `geo` extra (geopandas, rasterio) |
@@ -49,7 +49,7 @@ The s3 adapter shells out to the **AWS CLI** (`aws s3 ls/cp`) — configure `aws
 | `ERR: DAP DATADDS packet is apparently too short` printed to **stderr** | An OPeNDAP server (seen with NOAA PSL/THREDDS) truncated a large request; netCDF4 then returns a **plausible zero-filled array** — right shape/dtype, wrong data. See the silent-truncation guard section below for what is and isn't caught automatically. |
 | `DegenerateResponseError` | acmaddl's guard rejected a bitwise-constant / zero-filled (or, on the OPeNDAP obs path, all-NaN) response before it reached the cache. For OPeNDAP obs (`obs/ersst-v5`, `obs/cmap`) this is always on — commonly it means a truncated chunk, or (for the ocean-only `obs/ersst-v5`) a **land-only bbox** that is legitimately all-NaN (request an ocean-containing region). On the general path it only fires when you passed `degenerate_attempts>1`; acmaddl already retried with the cache bypassed, so a persistent error means the source itself is returning bad data. |
 | `AttributeError` on sheerwater's `chirps_raw_live` | Upstream sheerwater removed the near-real-time function; `obs/chirps-live-rhiza` fails until it is restored — for current-season CHIRPS use the native CHC products (subject to their rate limits) |
-| Full CrowdSec 403 on **every** CHC path including the site root | The IP ban is site-wide and time-limited (hours to days) — wait it out; don't retry, it can extend the ban |
+| Timeouts or 403 on **every** CHC path including the site root | The block is site-wide and time-limited (hours) — wait it out; retrying adds to the traffic and can extend it |
 | `WeatherSkillsNotInstalled` | The `weather-skills/*` products need the Rhiza provider packages: `uv sync --group weather-skills` (uv only — see Install notes) |
 | `WeatherSkillError: ... embargo` / `no data for this init` | ecmwf-fetch refused the init: real-time ECMWF S2S is embargoed 2 days — pick an older `init`, or use the credential-free `weather-skills/ifs-ens-46d` |
 | `WeatherSkillError: ... ECMWF Data Store credentials` | `weather-skills/ecmwf-s2s` needs an ECDS token (`ECMWF_DATASTORES_URL`/`KEY`, `~/.ecmwfdatastoresrc`, or an ECDS-pointing `~/.cdsapirc`); a Copernicus CDS key is a different token |
